@@ -531,11 +531,10 @@ with tabs[0]:
         with st.container(key="portfolio_hero"):
             st.markdown(
                 _clean_html("""
-                <span class="hero-eyebrow">General overview · not just another tab</span>
+                <span class="hero-eyebrow">General Overview - Data Management</span>
                 <h1>Portfolio Overview</h1>
                 <p style="font-size:14px; max-width:640px; margin:0 auto;">
-                    Asset Management · Statkraft Perú — consolidated view across the six Data
-                    Management workstreams, used as an input for management reporting.
+                    Asset Management · Statkraft Perú — Kevin Carrión & Jazmin Quispe.
                 </p>
                 """),
                 unsafe_allow_html=True,
@@ -578,7 +577,6 @@ with tabs[0]:
     st.markdown(project_table_html(df_portfolio), unsafe_allow_html=True)
 
     st.markdown("#### Portfolio Progress — Planned vs Actual (last 8 weeks)")
-    st.caption("Replaces the previous man-hours chart: tracks the portfolio-wide average progress against the S-curve plan.")
     weeks = df_portfolio_trend["WeekLabel"].tolist()
     planned = df_portfolio_trend["Planned%"].tolist()
     actual = df_portfolio_trend["Actual%"].tolist()
@@ -589,7 +587,7 @@ with tabs[0]:
 # ----------------------------------------------------------------------------
 with tabs[1]:
     prow = df_portfolio[df_portfolio["Name"] == "Cheves Value Pack"].iloc[0]
-    st.caption(f"Type {prow['Type']} · Development / Deployment · Source: {prow['Source']}")
+    st.caption(f"Type {prow['Type']} · Development / Deployment")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -610,7 +608,7 @@ with tabs[1]:
             project_like_card(item, get_phases_for("Cheves", item), get_milestones_for("Cheves", item),
                                status=get_status_for("Cheves", item), compact=True)
 
-    st.markdown("#### Progress Trend — Planned (S-curve) vs Actual (last 8 weeks)")
+    st.markdown("#### Progress Trend — Planned vs Actual (last 8 weeks)")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in CHEVES_ITEMS:
         labels, planned, actual = get_trend_for("Cheves", item)
@@ -623,7 +621,7 @@ with tabs[1]:
 # ----------------------------------------------------------------------------
 with tabs[2]:
     prow = df_portfolio[df_portfolio["Name"] == "General Scaling"].iloc[0]
-    st.caption(f"Type {prow['Type']} · Fleet-wide expansion: Cahua · Yaupi · Malpaso · Source: {prow['Source']}")
+    st.caption(f"Type {prow['Type']} · Fleet-wide expansion: Cahua · Yaupi · Malpaso")
 
     ROLLOUT_ITEMS = get_items_for_module("Rollout")
     latest_actuals = {}
@@ -648,7 +646,7 @@ with tabs[2]:
             project_like_card(item, get_phases_for("Rollout", item), get_milestones_for("Rollout", item),
                                status=get_status_for("Rollout", item), compact=True)
 
-    st.markdown("#### Progress Trend by Plant — Planned (S-curve) vs Actual (last 8 weeks)")
+    st.markdown("#### Progress Trend by Plant — Planned vs Actual (last 8 weeks)")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in ROLLOUT_ITEMS:
         labels, planned, actual = get_trend_for("Rollout", item)
@@ -661,7 +659,7 @@ with tabs[2]:
 # ----------------------------------------------------------------------------
 with tabs[3]:
     prow = df_portfolio[df_portfolio["Name"] == "AI Models Integration Agent"].iloc[0]
-    st.caption(f"O&M Agents · AI Models Integration Agent · Analytical & AI Models · Source: {prow['Source']}")
+    st.caption(f"O&M Agents · AI Models Integration Agent · Analytical & AI Models")
 
     AI_ITEMS = get_items_for_module("AIAgents")
     latest_actuals = {}
@@ -691,7 +689,7 @@ with tabs[3]:
                 project_like_card(item, get_phases_for("AIAgents", item), get_milestones_for("AIAgents", item),
                                    status=get_status_for("AIAgents", item), compact=True)
 
-    st.markdown("#### Progress Trend by Sub-agent — Planned (S-curve) vs Actual (last 8 weeks)")
+    st.markdown("#### Progress Trend by Sub-agent — Planned vs Actual (last 8 weeks)")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in AI_ITEMS:
         labels, planned, actual = get_trend_for("AIAgents", item)
@@ -704,7 +702,7 @@ with tabs[3]:
 # ----------------------------------------------------------------------------
 with tabs[4]:
     prow = df_portfolio[df_portfolio["Name"] == "SO Knowledge Integration Agent"].iloc[0]
-    st.caption(f"O&M Agents · SO Knowledge Integration Agent · Documents & Knowledge Management · Source: {prow['Source']}")
+    st.caption(f"O&M Agents · SO Knowledge Integration Agent · Documents & Knowledge Management")
 
     SO_ITEMS = get_items_for_module("SOKnowledge")
     latest_actuals = {}
@@ -732,7 +730,7 @@ with tabs[4]:
             project_like_card(item, get_phases_for("SOKnowledge", item), get_milestones_for("SOKnowledge", item),
                                status=get_status_for("SOKnowledge", item), compact=True)
 
-    st.markdown("#### Progress Trend by Sub-agent — Planned (S-curve) vs Actual (last 8 weeks)")
+    st.markdown("#### Progress Trend by Sub-agent — Planned vs Actual (last 8 weeks)")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in SO_ITEMS:
         labels, planned, actual = get_trend_for("SOKnowledge", item)
@@ -745,7 +743,7 @@ with tabs[4]:
 # ----------------------------------------------------------------------------
 with tabs[5]:
     prow = df_portfolio[df_portfolio["Name"] == "Data Governance MVP"].iloc[0]
-    st.caption(f"Type {prow['Type']} · {len(df_gov_domains)} domains × 5-stage maturity framework · Source: {prow['Source']}")
+    st.caption(f"Type {prow['Type']} · {len(df_gov_domains)} domains × 5-stage maturity framework")
 
     if "gov_selected_stage" not in st.session_state:
         st.session_state["gov_selected_stage"] = GOV_STAGES[0]
@@ -755,7 +753,7 @@ with tabs[5]:
 
     g1, g2 = st.columns([0.72, 0.28])
     with g1:
-        st.markdown("#### MVP Maturity Roadmap (overall)")
+        st.markdown("#### MVP Maturity Roadmap")
         stage_cols = st.columns(len(GOV_STAGES))
         for i, (col, stage) in enumerate(zip(stage_cols, GOV_STAGES)):
             if i < avg_stage_idx:
@@ -788,7 +786,7 @@ with tabs[5]:
                     """),
                     unsafe_allow_html=True,
                 )
-        with st.expander("ℹ️ ¿Qué significa cada etapa? / Stage guide"):
+        with st.expander("ℹ️ Stage guide"):
             for _, r in df_gov_stage_info.iterrows():
                 st.markdown(f"**{int(r['StageOrder'])}. {r['StageName']}** — {r['Description']}")
     with g2:
@@ -833,7 +831,7 @@ with tabs[5]:
 # ----------------------------------------------------------------------------
 with tabs[6]:
     prow = df_portfolio[df_portfolio["Name"] == "Executive Dashboard"].iloc[0]
-    st.caption(f"Type {prow['Type']} · Recurring monthly delivery to Management · Source: {prow['Source']}")
+    st.caption(f"Type {prow['Type']} · Recurring monthly delivery to Management")
 
     kpis_completed = int((df_exec_kpis["Actual"] >= df_exec_kpis["Target"]).sum())
     status_map = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
@@ -845,10 +843,10 @@ with tabs[6]:
     with c1:
         kpi_card("KPIs Completed", f"{kpis_completed}/{len(df_exec_kpis)}", accent=C_OCEAN_BLUE)
     with c2:
-        kpi_card("Data Updated (Teams)", "Yes" if data_updated_done else "Pending",
+        kpi_card("Data Updated", "Yes" if data_updated_done else "Pending",
                   accent=STATUS_COLORS["On Track"] if data_updated_done else STATUS_COLORS["Pending"])
     with c3:
-        kpi_card("Monthly Review (Sustentación)", "Completed" if sustentacion_done else "Pending",
+        kpi_card("Monthly Review", "Completed" if sustentacion_done else "Pending",
                   accent=STATUS_COLORS["On Track"] if sustentacion_done else STATUS_COLORS["Pending"])
     with c4:
         kpi_card("FAP Presentation", "Done" if fap_done else "Pending",
@@ -867,17 +865,15 @@ with tabs[6]:
                 target_label += f" · actual day {int(actual_day)}"
             checklist_item(ms, target_label, done)
     with right:
-        st.markdown("#### Reference Cycle")
+        st.markdown("#### Timeline")
         if os.path.exists(CYCLE_DIAGRAM_PATH):
             st.image(CYCLE_DIAGRAM_PATH, use_container_width=True)
-            st.caption("Fin de mes → 14 días → Datos Actualizados → 1 día → Actualización Dashboard "
-                       "→ Monthly Review → 15 días → FAP (4ª semana)")
+            st.caption("End of month → 14 days → Data Updated → 1 day → Dashboard Update "
+                       "→ Monthly Review → 15 days → FAP (4th week)")
         else:
-            st.caption("Sube assets/actualizacion.jpg para mostrar el diagrama de referencia.")
+            st.caption("Upload assets/actualizacion.jpg to display the reference diagram.")
 
     st.markdown("#### Data Update Compliance — Planned vs Actual Day (last 6 months)")
-    st.caption("Tracks the day teams actually finished updating their data each month against the day-14 target — "
-               "since some teams update the same day as, or right after, the sustentación.")
     hist = df_exec_cycle_history.copy()
     hist["Compliance"] = np.where(hist["ActualDay"] <= hist["PlannedDay"], "On time", "Delayed")
     cycle_compliance_chart(hist["Month"].tolist(), hist["PlannedDay"].tolist(), hist["ActualDay"].tolist(),
