@@ -159,10 +159,14 @@ st.markdown(
             background-size: cover;
             background-position: center;
         }}
+        div.st-key-portfolio_hero div[data-testid="stMarkdownContainer"] {{
+            text-align: center;
+        }}
         div.st-key-portfolio_hero h1 {{
             color: white !important; font-size: 34px !important; margin-bottom: 6px;
+            text-align: center;
         }}
-        div.st-key-portfolio_hero p {{ color: white !important; }}
+        div.st-key-portfolio_hero p {{ color: white !important; text-align: center; }}
         .hero-eyebrow {{
             display: inline-block; color: white; font-size: 11.5px; font-weight: 700;
             letter-spacing: 0.12em; text-transform: uppercase; background: rgba(255,255,255,0.18);
