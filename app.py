@@ -55,6 +55,21 @@ STATUS_BG = {
 
 TREND_LINE_COLORS = [C_OCEAN_BLUE, C_WARM_SOIL, C_DESERT_SUN, C_RED_SOIL]
 
+SCHEDULE_STATUS_COLORS = {
+    "Not Started": "#B9B4AA",
+    "No Deviation": "#1E8E5A",
+    "Moderate Deviation": "#C77700",
+    "Critical Deviation": "#8B1E1E",
+    "Stopped": "#ADDFFD",
+}
+SCHEDULE_STATUS_LABELS = {
+    "Not Started": "Not Started",
+    "No Deviation": "No Deviation",
+    "Moderate Deviation": "Moderate Deviation (≤15%)",
+    "Critical Deviation": "Critical Deviation (>15%)",
+    "Stopped": "Stopped",
+}
+
 BASE_DIR = os.path.dirname(__file__)
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 DATA_FILE = os.path.join(BASE_DIR, "data_source.xlsx")
@@ -196,7 +211,7 @@ if not os.path.exists(DATA_FILE):
 sheets = load_workbook(DATA_FILE, os.path.getmtime(DATA_FILE))
 
 df_portfolio = sheets["Portfolio"]
-df_portfolio_trend = sheets["Portfolio_Trend"].sort_values("Week")
+df_portfolio_trend = sheets["Portfolio_Trend"].sort_values("Month")
 df_phases = sheets["Phases"]
 df_milestones = sheets["Milestones"]
 df_item_status = sheets["Item_Status"]
@@ -254,6 +269,13 @@ def get_extra_kpi(module, kpi_name, default="--"):
     return row.iloc[0]["KPI_Value"] if not row.empty else default
 
 
+def get_trend_monthly_for(project_id, up_to_month=None):
+    d = df_portfolio_trend[df_portfolio_trend["ProjectID"] == project_id].sort_values("Month")
+    if up_to_month is not None:
+        d = d[d["Month"] <= up_to_month]
+    return d["MonthLabel"].tolist(), d["Planned%"].tolist(), d["Actual%"].tolist()
+
+
 def get_base64(path):
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()
@@ -281,6 +303,73 @@ def kpi_card(label, value, accent=C_OCEAN_BLUE, sub=None, big=False):
         """),
         unsafe_allow_html=True,
     )
+
+
+def status_dot(color, size=12):
+    return f'<span style="width:{size}px;height:{size}px;border-radius:50%;background:{color};display:inline-block;flex-shrink:0;"></span>'
+
+
+def kpi_dot_card(label, value, color, sub=None):
+    sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
+    st.markdown(
+        _clean_html(f"""
+        <div class="kpi-card" style="--accent:{color};">
+            <div style="display:flex; align-items:center; gap:9px;">
+                {status_dot(color, 15)}
+                <div class="kpi-value" style="font-size:22px;">{value}</div>
+            </div>
+            <div class="kpi-label" style="margin-top:6px;">{label}</div>
+            {sub_html}
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
+
+
+def sparkline_chart(labels, values, color=C_OCEAN_BLUE, height=54, key=None):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=labels, y=values, mode="lines+markers",
+        line=dict(color=color, width=2.5), marker=dict(size=3, color=color),
+        hovertemplate="%{x}: %{y}%<extra></extra>",
+    ))
+    fig.update_layout(
+        height=height, margin=dict(l=0, r=0, t=2, b=2),
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        plot_bgcolor="white", paper_bgcolor="white", showlegend=False,
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
+
+
+def project_overview_card(name, description, status, source, trend_labels, trend_values, key=None):
+    color = STATUS_COLORS.get(status, "#8A8580")
+    st.markdown('<div class="kpi-card" style="padding:14px 16px 8px 16px;">', unsafe_allow_html=True)
+    st.markdown(
+        _clean_html(f"""
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <span style="font-weight:700; font-size:14px; color:{C_BLACK};">{name}</span>
+            <span title="{status}">{status_dot(color, 13)}</span>
+        </div>
+        <div class="pbi-desc" style="margin:4px 0 2px 0; min-height:32px;">{description}</div>
+        """),
+        unsafe_allow_html=True,
+    )
+    if trend_values:
+        sparkline_chart(trend_labels, trend_values, color=C_OCEAN_BLUE, height=52, key=f"spark_{key}")
+        last_val, last_label = trend_values[-1], trend_labels[-1]
+    else:
+        st.caption("No trend data yet.")
+        last_val, last_label = "--", ""
+    st.markdown(
+        _clean_html(f"""
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:-4px;">
+            <span class="source-tag">{source}</span>
+            <span style="font-size:11px; color:{C_TEXT_MUTED}; font-weight:600;">{last_val}% as of {last_label}</span>
+        </div>
+        """),
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 def line_chart(labels, actual_series: dict, planned_series: dict = None, y_suffix="%", height=280,
@@ -502,6 +591,19 @@ with h3:
         st.rerun()
     st.caption(f"Source updated: {datetime.fromtimestamp(os.path.getmtime(DATA_FILE)).strftime('%b %d, %Y %H:%M')}")
 
+month_opts = df_portfolio_trend[["Month", "MonthLabel"]].drop_duplicates().sort_values("Month")
+MONTH_LABEL_MAP = dict(zip(month_opts["Month"], month_opts["MonthLabel"]))
+
+f1, f2 = st.columns([0.22, 0.78])
+with f1:
+    selected_month = st.selectbox(
+        "📅 Month filter (applies to every tab)",
+        options=month_opts["Month"].tolist(),
+        format_func=lambda m: MONTH_LABEL_MAP[m],
+        index=len(month_opts) - 1,
+    )
+selected_month_label = MONTH_LABEL_MAP[selected_month]
+
 st.write("")
 
 PAGE_NAMES = [
@@ -542,11 +644,16 @@ with tabs[0]:
     else:
         st.markdown("<h1 style='text-align:center;'>Portfolio Overview</h1>", unsafe_allow_html=True)
 
-    active = len(df_portfolio)
-    on_track = int((df_portfolio["Status"] == "On Track").sum())
-    at_risk = int((df_portfolio["Status"] == "At Risk").sum())
-    delayed = int((df_portfolio["Status"] == "Delayed").sum())
-    avg_progress = round(df_portfolio["Progress%"].mean())
+    st.caption(f"📅 Viewing as of: **{selected_month_label}**")
+
+    import calendar
+    ref_date = pd.Timestamp(year=2026, month=int(selected_month), day=calendar.monthrange(2026, int(selected_month))[1])
+    window_start = ref_date - pd.Timedelta(weeks=6)
+    active_6w = int(((df_portfolio["CutoffDate"] >= window_start) & (df_portfolio["CutoffDate"] <= ref_date)).sum())
+
+    sched_counts = df_portfolio["ScheduleStatus"].value_counts()
+    month_slice = df_portfolio_trend[df_portfolio_trend["Month"] == selected_month]
+    avg_progress = round(month_slice["Actual%"].mean()) if not month_slice.empty else round(df_portfolio["Progress%"].mean())
 
     cfg = df_exec_cycle_config
     status_map_exec = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
@@ -558,29 +665,32 @@ with tabs[0]:
     if next_ms is None:
         next_ms = cfg.iloc[-1]
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    with c1:
-        kpi_card("Active Projects", active, accent=C_OCEAN_BLUE, big=True)
-    with c2:
-        kpi_card("On Track", on_track, accent=STATUS_COLORS["On Track"], big=True)
-    with c3:
-        kpi_card("At Risk", at_risk, accent=STATUS_COLORS["At Risk"], big=True)
-    with c4:
-        kpi_card("Delayed", delayed, accent=STATUS_COLORS["Delayed"], big=True)
-    with c5:
+    kpi_cols = st.columns(8)
+    with kpi_cols[0]:
+        kpi_card("Active Projects (Last 6 Weeks)", active_6w, accent=C_OCEAN_BLUE, big=True)
+    for i, cat in enumerate(["Not Started", "No Deviation", "Moderate Deviation", "Critical Deviation", "Stopped"]):
+        with kpi_cols[i + 1]:
+            kpi_dot_card(SCHEDULE_STATUS_LABELS[cat], int(sched_counts.get(cat, 0)), SCHEDULE_STATUS_COLORS[cat])
+    with kpi_cols[6]:
         kpi_card("Portfolio Avg. Progress", f"{avg_progress}%", accent=C_OCEAN_BLUE, big=True)
-    with c6:
-        kpi_card("Next Cycle Milestone", next_ms["Milestone"], accent=C_WARM_SOIL,
+    with kpi_cols[7]:
+        kpi_card("Next Milestone", next_ms["Milestone"], accent=C_WARM_SOIL,
                   sub=f"Planned day: {int(next_ms['PlannedDayOffset'])}")
 
     st.markdown("#### Projects")
-    st.markdown(project_table_html(df_portfolio), unsafe_allow_html=True)
+    proj_cols = st.columns(3)
+    for i, (_, p) in enumerate(df_portfolio.iterrows()):
+        labels, _, actuals = get_trend_monthly_for(p["ProjectID"], up_to_month=selected_month)
+        with proj_cols[i % 3]:
+            project_overview_card(p["Name"], p["Description"], p["Status"], p["Source"], labels, actuals,
+                                   key=p["ProjectID"])
+            st.write("")
 
-    st.markdown("#### Portfolio Progress — Planned vs Actual (last 8 weeks)")
-    weeks = df_portfolio_trend["WeekLabel"].tolist()
-    planned = df_portfolio_trend["Planned%"].tolist()
-    actual = df_portfolio_trend["Actual%"].tolist()
-    line_chart(weeks, {"Portfolio": actual}, {"Portfolio": planned}, single_label=("Actual", "Planned"))
+    st.markdown(f"#### Portfolio Progress — Planned vs Actual (Jan – {selected_month_label})")
+    agg = (df_portfolio_trend[df_portfolio_trend["Month"] <= selected_month]
+           .groupby(["Month", "MonthLabel"])[["Planned%", "Actual%"]].mean().reset_index().sort_values("Month"))
+    line_chart(agg["MonthLabel"].tolist(), {"Portfolio": agg["Actual%"].round(1).tolist()},
+               {"Portfolio": agg["Planned%"].round(1).tolist()}, single_label=("Actual", "Planned"))
 
 # ----------------------------------------------------------------------------
 # PAGE: CHEVES VALUE PACK
@@ -588,6 +698,7 @@ with tabs[0]:
 with tabs[1]:
     prow = df_portfolio[df_portfolio["Name"] == "Cheves Value Pack"].iloc[0]
     st.caption(f"Type {prow['Type']} · Development / Deployment")
+    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -622,6 +733,7 @@ with tabs[1]:
 with tabs[2]:
     prow = df_portfolio[df_portfolio["Name"] == "General Scaling"].iloc[0]
     st.caption(f"Type {prow['Type']} · Fleet-wide expansion: Cahua · Yaupi · Malpaso")
+    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
 
     ROLLOUT_ITEMS = get_items_for_module("Rollout")
     latest_actuals = {}
@@ -660,6 +772,7 @@ with tabs[2]:
 with tabs[3]:
     prow = df_portfolio[df_portfolio["Name"] == "AI Models Integration Agent"].iloc[0]
     st.caption(f"O&M Agents · AI Models Integration Agent · Analytical & AI Models")
+    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
 
     AI_ITEMS = get_items_for_module("AIAgents")
     latest_actuals = {}
@@ -703,6 +816,7 @@ with tabs[3]:
 with tabs[4]:
     prow = df_portfolio[df_portfolio["Name"] == "SO Knowledge Integration Agent"].iloc[0]
     st.caption(f"O&M Agents · SO Knowledge Integration Agent · Documents & Knowledge Management")
+    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
 
     SO_ITEMS = get_items_for_module("SOKnowledge")
     latest_actuals = {}
@@ -744,6 +858,7 @@ with tabs[4]:
 with tabs[5]:
     prow = df_portfolio[df_portfolio["Name"] == "Data Governance MVP"].iloc[0]
     st.caption(f"Type {prow['Type']} · {len(df_gov_domains)} domains × 5-stage maturity framework")
+    st.caption(f"📅 Viewing as of: **{selected_month_label}**")
 
     if "gov_selected_stage" not in st.session_state:
         st.session_state["gov_selected_stage"] = GOV_STAGES[0]
@@ -832,6 +947,7 @@ with tabs[5]:
 with tabs[6]:
     prow = df_portfolio[df_portfolio["Name"] == "Executive Dashboard"].iloc[0]
     st.caption(f"Type {prow['Type']} · Recurring monthly delivery to Management")
+    st.caption(f"📅 Viewing as of: **{selected_month_label}**")
 
     kpis_completed = int((df_exec_kpis["Actual"] >= df_exec_kpis["Target"]).sum())
     status_map = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
@@ -873,11 +989,16 @@ with tabs[6]:
         else:
             st.caption("Upload assets/actualizacion.jpg to display the reference diagram.")
 
-    st.markdown("#### Data Update Compliance — Planned vs Actual Day (last 6 months)")
+    st.markdown(f"#### Data Update Compliance — Planned vs Actual Day (through {selected_month_label})")
     hist = df_exec_cycle_history.copy()
+    hist["MonthNum"] = pd.to_datetime(hist["Month"], format="%b-%y").dt.month
+    hist = hist[hist["MonthNum"] <= selected_month]
     hist["Compliance"] = np.where(hist["ActualDay"] <= hist["PlannedDay"], "On time", "Delayed")
-    cycle_compliance_chart(hist["Month"].tolist(), hist["PlannedDay"].tolist(), hist["ActualDay"].tolist(),
-                            hist["Compliance"].tolist())
+    if hist.empty:
+        st.caption("No cycle history available on or before the selected month.")
+    else:
+        cycle_compliance_chart(hist["Month"].tolist(), hist["PlannedDay"].tolist(), hist["ActualDay"].tolist(),
+                                hist["Compliance"].tolist())
 
     st.markdown("#### Management KPIs (10)")
     cols = st.columns(5)
