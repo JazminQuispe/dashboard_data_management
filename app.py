@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import os
 import base64
+import calendar
 from datetime import datetime
 
 
@@ -70,6 +71,8 @@ SCHEDULE_STATUS_LABELS = {
     "Stopped": "Stopped",
 }
 
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
 BASE_DIR = os.path.dirname(__file__)
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 DATA_FILE = os.path.join(BASE_DIR, "data_source.xlsx")
@@ -114,6 +117,10 @@ st.markdown(
             padding: 14px 16px;
             box-shadow: 0 1px 3px rgba(44,15,0,0.06);
             height: 100%;
+            min-height: 104px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
         }}
         .kpi-label {{
             font-size: 11.5px; color: {C_TEXT_MUTED}; margin-bottom: 6px;
@@ -154,10 +161,6 @@ st.markdown(
         .checklist-label {{ flex: 2; font-weight: 600; color: {C_BLACK}; }}
         .checklist-target {{ flex: 1.4; color: {C_TEXT_MUTED}; font-size: 12px; }}
 
-        .stage-pill {{
-            border-radius: 8px; padding: 10px 8px; text-align: center;
-            font-size: 12px; min-height: 58px; color: white;
-        }}
         .plant-card {{
             background-color: {C_GREY_BG}; border: 1px solid {C_GREY_BORDER};
             border-radius: 10px; padding: 14px; height: 100%;
@@ -187,6 +190,20 @@ st.markdown(
             letter-spacing: 0.12em; text-transform: uppercase; background: rgba(255,255,255,0.18);
             padding: 4px 12px; border-radius: 20px; margin-bottom: 10px;
         }}
+
+        /* Project overview cards (Portfolio tab) — real bordered containers */
+        div[data-testid="stVerticalBlockBorderWrapper"].st-key-projcard {{
+            border-radius: 8px !important; box-shadow: 0 1px 3px rgba(44,15,0,0.06);
+        }}
+
+        /* Chevron / arrow roadmap for Data Governance */
+        .chevron-wrap {{ display: flex; width: 100%; }}
+        .chevron-step {{
+            flex: 1; position: relative; color: white; font-weight: 700; font-size: 12px;
+            text-align: center; padding: 16px 14px; margin-left: -16px;
+            clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%, 12% 50%);
+        }}
+        .chevron-step:first-child {{ margin-left: 0; clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%); }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -211,37 +228,81 @@ if not os.path.exists(DATA_FILE):
 sheets = load_workbook(DATA_FILE, os.path.getmtime(DATA_FILE))
 
 df_portfolio = sheets["Portfolio"]
-df_portfolio_trend = sheets["Portfolio_Trend"].sort_values("Month")
+df_weekly = sheets["Weekly_Data"]
 df_phases = sheets["Phases"]
 df_milestones = sheets["Milestones"]
-df_item_status = sheets["Item_Status"]
-df_trends = sheets["Trends"]
-df_gov_domains = sheets["Governance_Domains"]
-df_gov_domains = df_gov_domains[df_gov_domains["Domain"].notna() & (df_gov_domains["Stage(0-4)"].notna())].copy()
+df_gov_domains_w = sheets["Governance_Domains"]
 df_gov_stage_info = sheets["Governance_StageInfo"].sort_values("StageOrder")
 df_gov_datasets = sheets["Governance_Datasets"]
 df_gov_ownership = sheets["Governance_Ownership"]
 df_gov_quality = sheets["Governance_QualityRules"]
 df_gov_pipeline = sheets["Governance_Pipeline"]
 df_gov_monitoring = sheets["Governance_Monitoring"]
-df_exec_kpis = sheets["Executive_KPIs"]
 df_exec_cycle_config = sheets["Executive_Cycle_Config"].sort_values("Order")
 df_exec_cycle_status = sheets["Executive_Cycle_Status"]
 df_exec_cycle_history = sheets["Executive_Cycle_History"]
-df_extra_kpis = sheets["Extra_KPIs"]
 
 GOV_STAGES = df_gov_stage_info["StageName"].tolist()
 
+_weekly_idx = df_weekly.set_index(["Module", "Item", "Week"]).sort_index()
+_gov_idx = df_gov_domains_w.set_index(["Domain", "Week"]).sort_index()
 
-# ----------------------------------------------------------------------------
-# DATA ACCESS HELPERS
-# ----------------------------------------------------------------------------
-def get_items_for_module(module):
-    seen = []
-    for it in df_phases[df_phases["Module"] == module]["Item"]:
-        if it not in seen:
-            seen.append(it)
-    return seen
+MODULE_ITEMS = {
+    "Portfolio": df_portfolio["Name"].tolist(),
+    "Cheves": ["Anomaly Detection", "CWS", "UH Prediction"],
+    "Rollout": ["Cahua", "Yaupi", "Malpaso"],
+    "AIAgents": [
+        "Autonomous Anomaly Detection Agent", "CWS Health Monitoring and Forecasting Agent",
+        "HPU Health Monitoring and Forecasting Agent", "Vibration Monitoring Agent",
+    ],
+    "SOKnowledge": [
+        "O&M Manuals Agent", "Root Cause Analysis Agent", "Cross-Functional SO Meetings Agent",
+    ],
+}
+
+
+def week_label(week):
+    m = (week - 1) // 4
+    wim = (week - 1) % 4 + 1
+    return f"{MONTH_ABBR[m]}-W{wim}"
+
+
+def get_row(module, item, week):
+    try:
+        return _weekly_idx.loc[(module, item, week)]
+    except KeyError:
+        return None
+
+
+def get_series(module, item, upto_week):
+    d = df_weekly[(df_weekly["Module"] == module) & (df_weekly["Item"] == item) & (df_weekly["Week"] <= upto_week)]
+    d = d.sort_values("Week")
+    labels = [week_label(w) for w in d["Week"]]
+    return labels, d["Planned%"].tolist(), d["Progress%"].tolist()
+
+
+def get_module_avg_at(module, week, col="Progress%"):
+    items = MODULE_ITEMS[module]
+    vals = []
+    for it in items:
+        r = get_row(module, it, week)
+        if r is not None:
+            vals.append(r[col])
+    return round(np.mean(vals)) if vals else 0
+
+
+def get_gov_row(domain, week):
+    try:
+        return _gov_idx.loc[(domain, week)]
+    except KeyError:
+        return None
+
+
+def get_gov_series(domain, upto_week):
+    d = df_gov_domains_w[(df_gov_domains_w["Domain"] == domain) & (df_gov_domains_w["Week"] <= upto_week)]
+    d = d.sort_values("Week")
+    labels = [week_label(w) for w in d["Week"]]
+    return labels, d["Planned%"].tolist() if "Planned%" in d.columns else None, d["PlanningProgress%"].tolist()
 
 
 def get_phases_for(module, item):
@@ -249,31 +310,14 @@ def get_phases_for(module, item):
     return dict(zip(d["PhaseName"], d["Value%"]))
 
 
-def get_milestones_for(module, item):
+def get_milestones_for(module, item, upto_week):
     d = df_milestones[(df_milestones["Module"] == module) & (df_milestones["Item"] == item)].sort_values("MilestoneOrder")
-    return [(row["Milestone"], str(row["Done"]).strip().upper() == "Y") for _, row in d.iterrows()]
-
-
-def get_status_for(module, item, default="Pending"):
-    row = df_item_status[(df_item_status["Module"] == module) & (df_item_status["Item"] == item)]
-    return row.iloc[0]["Status"] if not row.empty else default
-
-
-def get_trend_for(module, item):
-    d = df_trends[(df_trends["Module"] == module) & (df_trends["Item"] == item)].sort_values("Week")
-    return d["WeekLabel"].tolist(), d["Planned%"].tolist(), d["Actual%"].tolist()
-
-
-def get_extra_kpi(module, kpi_name, default="--"):
-    row = df_extra_kpis[(df_extra_kpis["Module"] == module) & (df_extra_kpis["KPI_Name"] == kpi_name)]
-    return row.iloc[0]["KPI_Value"] if not row.empty else default
-
-
-def get_trend_monthly_for(project_id, up_to_month=None):
-    d = df_portfolio_trend[df_portfolio_trend["ProjectID"] == project_id].sort_values("Month")
-    if up_to_month is not None:
-        d = d[d["Month"] <= up_to_month]
-    return d["MonthLabel"].tolist(), d["Planned%"].tolist(), d["Actual%"].tolist()
+    out = []
+    for _, row in d.iterrows():
+        wc = row["WeekCompleted"]
+        done = pd.notna(wc) and wc <= upto_week
+        out.append((row["Milestone"], done))
+    return out
 
 
 def get_base64(path):
@@ -292,7 +336,7 @@ def badge(text):
 
 def kpi_card(label, value, accent=C_OCEAN_BLUE, sub=None, big=False):
     sub_html = f'<div class="kpi-sub">{sub}</div>' if sub else ""
-    value_style = "font-size:30px;" if big else ""
+    value_style = "font-size:26px;" if big else "font-size:20px;"
     st.markdown(
         _clean_html(f"""
         <div class="kpi-card" style="--accent:{accent};">
@@ -343,33 +387,32 @@ def sparkline_chart(labels, values, color=C_OCEAN_BLUE, height=54, key=None):
 
 def project_overview_card(name, description, status, source, trend_labels, trend_values, key=None):
     color = STATUS_COLORS.get(status, "#8A8580")
-    st.markdown('<div class="kpi-card" style="padding:14px 16px 8px 16px;">', unsafe_allow_html=True)
-    st.markdown(
-        _clean_html(f"""
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-            <span style="font-weight:700; font-size:14px; color:{C_BLACK};">{name}</span>
-            <span title="{status}">{status_dot(color, 13)}</span>
-        </div>
-        <div class="pbi-desc" style="margin:4px 0 2px 0; min-height:32px;">{description}</div>
-        """),
-        unsafe_allow_html=True,
-    )
-    if trend_values:
-        sparkline_chart(trend_labels, trend_values, color=C_OCEAN_BLUE, height=52, key=f"spark_{key}")
-        last_val, last_label = trend_values[-1], trend_labels[-1]
-    else:
-        st.caption("No trend data yet.")
-        last_val, last_label = "--", ""
-    st.markdown(
-        _clean_html(f"""
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:-4px;">
-            <span class="source-tag">{source}</span>
-            <span style="font-size:11px; color:{C_TEXT_MUTED}; font-weight:600;">{last_val}% as of {last_label}</span>
-        </div>
-        """),
-        unsafe_allow_html=True,
-    )
-    st.markdown("</div>", unsafe_allow_html=True)
+    with st.container(border=True, key=f"projcard_{key}"):
+        st.markdown(
+            _clean_html(f"""
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+                <span style="font-weight:700; font-size:14px; color:{C_BLACK};">{name}</span>
+                <span title="{status}">{status_dot(color, 13)}</span>
+            </div>
+            <div class="pbi-desc" style="margin:4px 0 2px 0; min-height:32px;">{description}</div>
+            """),
+            unsafe_allow_html=True,
+        )
+        if trend_values:
+            sparkline_chart(trend_labels, trend_values, color=C_OCEAN_BLUE, height=52, key=f"spark_{key}")
+            last_val, last_label = trend_values[-1], trend_labels[-1]
+        else:
+            st.caption("No trend data yet.")
+            last_val, last_label = "--", ""
+        st.markdown(
+            _clean_html(f"""
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:-4px;">
+                <span class="source-tag">{source}</span>
+                <span style="font-size:11px; color:{C_TEXT_MUTED}; font-weight:600;">{last_val}% as of {last_label}</span>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
 
 
 def line_chart(labels, actual_series: dict, planned_series: dict = None, y_suffix="%", height=280,
@@ -427,29 +470,6 @@ def cycle_compliance_chart(months, planned, actual, compliance, height=280):
     st.plotly_chart(fig, use_container_width=True)
 
 
-def gauge_chart(value, title, color=C_OCEAN_BLUE, height=220):
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=value,
-        number={"suffix": "%", "font": {"size": 30, "color": C_BLACK}},
-        title={"text": title, "font": {"size": 13, "color": C_TEXT_MUTED}},
-        gauge={
-            "axis": {"range": [0, 100], "tickcolor": C_TEXT_MUTED, "tickfont": {"size": 9}},
-            "bar": {"color": color, "thickness": 0.3},
-            "bgcolor": C_GREY_BG,
-            "borderwidth": 0,
-            "steps": [
-                {"range": [0, 40], "color": "#FBE7E4"},
-                {"range": [40, 75], "color": "#FCEFDD"},
-                {"range": [75, 100], "color": "#E6F4EC"},
-            ],
-        },
-    ))
-    fig.update_layout(height=height, margin=dict(l=20, r=20, t=40, b=10),
-                       paper_bgcolor="white", font=dict(family="Inter"))
-    st.plotly_chart(fig, use_container_width=True)
-
-
 def phase_bars(title, phase_values: dict, compact=False):
     if title:
         st.markdown(f"**{title}**")
@@ -484,30 +504,6 @@ def checklist_item(label, target, done):
     )
 
 
-def project_table_html(df):
-    rows = ""
-    for _, p in df.iterrows():
-        prog = int(p["Progress%"])
-        rows += f"""
-        <tr>
-            <td><b>{p['Name']}</b></td>
-            <td class="pbi-desc">{p['Description']}</td>
-            <td style="min-width:140px;">
-                <div class="progress-track"><div class="progress-fill" style="width:{prog}%;"></div></div>
-                <div style="font-size:11px; color:{C_TEXT_MUTED}; margin-top:2px;">{prog}%</div>
-            </td>
-            <td>{badge(p['Status'])}</td>
-            <td><span class="source-tag">{p['Source']}</span></td>
-        </tr>
-        """
-    return _clean_html(f"""
-    <table class="pbi-table">
-        <thead><tr><th>Project</th><th>Description</th><th>Progress</th><th>Status</th><th>Source</th></tr></thead>
-        <tbody>{rows}</tbody>
-    </table>
-    """)
-
-
 def project_like_card(name, phases, milestones, status=None, compact=True):
     st.markdown('<div class="plant-card">', unsafe_allow_html=True)
     status_html = badge(status) if status else ""
@@ -537,35 +533,31 @@ def render_gov_stage_detail(domain, stage):
     elif stage == "Ownership Definition":
         df = df_gov_ownership[df_gov_ownership["Domain"] == domain].drop(columns="Domain")
         st.markdown("**Ownership Matrix**")
-        st.caption("No data owners assigned yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
+        st.caption("No ownership defined yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Data Quality Rules":
         df = df_gov_quality[df_gov_quality["Domain"] == domain].drop(columns="Domain")
-        st.markdown("**Data Quality Rules**")
+        st.markdown("**Quality Rules**")
         st.caption("No quality rules defined yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Pipeline & Dashboard Implementation":
         row = df_gov_pipeline[df_gov_pipeline["Domain"] == domain]
-        st.markdown("**Pipeline & Dashboard Implementation**")
         if row.empty:
             st.caption("No pipeline info yet for this domain.")
         else:
             info = row.iloc[0]
-            st.markdown(
-                f"Pipeline: {badge(info['PipelineStatus'])} &nbsp;&nbsp; Dashboard: {badge(info['DashboardStatus'])}",
-                unsafe_allow_html=True,
-            )
+            st.markdown(f"**Pipeline status:** {badge(info['PipelineStatus'])}", unsafe_allow_html=True)
+            st.markdown(f"**Dashboard status:** {badge(info['DashboardStatus'])}", unsafe_allow_html=True)
             st.caption(info["Notes"])
 
     elif stage == "Monitoring & Continuous Improvement":
         row = df_gov_monitoring[df_gov_monitoring["Domain"] == domain]
-        st.markdown("**Monitoring Summary**")
         if row.empty:
             st.caption("No monitoring info yet for this domain.")
         else:
             info = row.iloc[0]
-            st.caption(
-                f"Datasets OK: {int(info['DatasetsOK%'])}% · Recurring issues: {int(info['Issues'])} · "
+            st.markdown(
+                f"**Datasets OK:** {int(info['DatasetsOK%'])}% · **Issues:** {int(info['Issues'])} · "
                 f"Backlog items: {int(info['Backlog'])}"
             )
 
@@ -591,18 +583,20 @@ with h3:
         st.rerun()
     st.caption(f"Source updated: {datetime.fromtimestamp(os.path.getmtime(DATA_FILE)).strftime('%b %d, %Y %H:%M')}")
 
-month_opts = df_portfolio_trend[["Month", "MonthLabel"]].drop_duplicates().sort_values("Month")
-MONTH_LABEL_MAP = dict(zip(month_opts["Month"], month_opts["MonthLabel"]))
-
-f1, f2 = st.columns([0.22, 0.78])
+# ----------------------------------------------------------------------------
+# GLOBAL MONTH + WEEK FILTER — drives every tab, always cumulative from Week 1
+# ----------------------------------------------------------------------------
+f1, f2, f3 = st.columns([0.16, 0.14, 0.70])
 with f1:
-    selected_month = st.selectbox(
-        "📅 Month filter (applies to every tab)",
-        options=month_opts["Month"].tolist(),
-        format_func=lambda m: MONTH_LABEL_MAP[m],
-        index=len(month_opts) - 1,
-    )
-selected_month_label = MONTH_LABEL_MAP[selected_month]
+    sel_month = st.selectbox("📅 Month filter (applies to every tab)", options=list(range(1, 13)),
+                              format_func=lambda m: MONTH_ABBR[m - 1], index=5)
+with f2:
+    sel_week_in_month = st.selectbox("Week", options=[1, 2, 3, 4], format_func=lambda w: f"W{w}", index=3)
+selected_week = (sel_month - 1) * 4 + sel_week_in_month
+selected_week_label = week_label(selected_week)
+with f3:
+    st.caption(f"Showing data accumulated from **Jan-W1** through **{selected_week_label}** in every tab below. "
+               f"Weeks beyond Jun-W4 are still placeholders at 0 — fill them in weekly in Weekly_Data.")
 
 st.write("")
 
@@ -614,7 +608,7 @@ PAGE_NAMES = [
 tabs = st.tabs(PAGE_NAMES)
 
 # ----------------------------------------------------------------------------
-# PAGE: PORTFOLIO OVERVIEW — hero banner, 6 KPI cards, weekly progress trend
+# PAGE: PORTFOLIO OVERVIEW
 # ----------------------------------------------------------------------------
 with tabs[0]:
     if os.path.exists(CHEVES_BG_PATH):
@@ -644,16 +638,24 @@ with tabs[0]:
     else:
         st.markdown("<h1 style='text-align:center;'>Portfolio Overview</h1>", unsafe_allow_html=True)
 
-    st.caption(f"📅 Viewing as of: **{selected_month_label}**")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
-    import calendar
-    ref_date = pd.Timestamp(year=2026, month=int(selected_month), day=calendar.monthrange(2026, int(selected_month))[1])
-    window_start = ref_date - pd.Timedelta(weeks=6)
-    active_6w = int(((df_portfolio["CutoffDate"] >= window_start) & (df_portfolio["CutoffDate"] <= ref_date)).sum())
-
-    sched_counts = df_portfolio["ScheduleStatus"].value_counts()
-    month_slice = df_portfolio_trend[df_portfolio_trend["Month"] == selected_month]
-    avg_progress = round(month_slice["Actual%"].mean()) if not month_slice.empty else round(df_portfolio["Progress%"].mean())
+    prev_week = max(1, selected_week - 6)
+    active_6w = 0
+    sched_counts = {k: 0 for k in SCHEDULE_STATUS_COLORS}
+    progress_vals = []
+    for name in MODULE_ITEMS["Portfolio"]:
+        cur = get_row("Portfolio", name, selected_week)
+        prev = get_row("Portfolio", name, prev_week)
+        cur_prog = cur["Progress%"] if cur is not None else 0
+        prev_prog = prev["Progress%"] if prev is not None else 0
+        if (selected_week <= 6 and cur_prog > 0) or (cur_prog - prev_prog) > 0:
+            active_6w += 1
+        if cur is not None and cur["ScheduleStatus"] in sched_counts:
+            sched_counts[cur["ScheduleStatus"]] += 1
+        if cur is not None:
+            progress_vals.append(cur_prog)
+    avg_progress = round(np.mean(progress_vals)) if progress_vals else 0
 
     cfg = df_exec_cycle_config
     status_map_exec = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
@@ -670,7 +672,7 @@ with tabs[0]:
         kpi_card("Active Projects (Last 6 Weeks)", active_6w, accent=C_OCEAN_BLUE, big=True)
     for i, cat in enumerate(["Not Started", "No Deviation", "Moderate Deviation", "Critical Deviation", "Stopped"]):
         with kpi_cols[i + 1]:
-            kpi_dot_card(SCHEDULE_STATUS_LABELS[cat], int(sched_counts.get(cat, 0)), SCHEDULE_STATUS_COLORS[cat])
+            kpi_dot_card(SCHEDULE_STATUS_LABELS[cat], sched_counts[cat], SCHEDULE_STATUS_COLORS[cat])
     with kpi_cols[6]:
         kpi_card("Portfolio Avg. Progress", f"{avg_progress}%", accent=C_OCEAN_BLUE, big=True)
     with kpi_cols[7]:
@@ -680,17 +682,29 @@ with tabs[0]:
     st.markdown("#### Projects")
     proj_cols = st.columns(3)
     for i, (_, p) in enumerate(df_portfolio.iterrows()):
-        labels, _, actuals = get_trend_monthly_for(p["ProjectID"], up_to_month=selected_month)
+        labels, _, actuals = get_series("Portfolio", p["Name"], selected_week)
         with proj_cols[i % 3]:
-            project_overview_card(p["Name"], p["Description"], p["Status"], p["Source"], labels, actuals,
+            cur = get_row("Portfolio", p["Name"], selected_week)
+            status = cur["Status"] if cur is not None and cur["Status"] else "Pending"
+            project_overview_card(p["Name"], p["Description"], status, p["Source"], labels, actuals,
                                    key=p["ProjectID"])
             st.write("")
 
-    st.markdown(f"#### Portfolio Progress — Planned vs Actual (Jan – {selected_month_label})")
-    agg = (df_portfolio_trend[df_portfolio_trend["Month"] <= selected_month]
-           .groupby(["Month", "MonthLabel"])[["Planned%", "Actual%"]].mean().reset_index().sort_values("Month"))
-    line_chart(agg["MonthLabel"].tolist(), {"Portfolio": agg["Actual%"].round(1).tolist()},
-               {"Portfolio": agg["Planned%"].round(1).tolist()}, single_label=("Actual", "Planned"))
+    st.markdown(f"#### Portfolio Progress — Planned vs Actual (Jan-W1 – {selected_week_label})")
+    agg_rows = []
+    for w in range(1, selected_week + 1):
+        planned_vals, actual_vals = [], []
+        for name in MODULE_ITEMS["Portfolio"]:
+            r = get_row("Portfolio", name, w)
+            if r is not None:
+                planned_vals.append(r["Planned%"])
+                actual_vals.append(r["Progress%"])
+        agg_rows.append((week_label(w), np.mean(planned_vals) if planned_vals else 0,
+                          np.mean(actual_vals) if actual_vals else 0))
+    agg_labels = [r[0] for r in agg_rows]
+    agg_planned = [round(r[1], 1) for r in agg_rows]
+    agg_actual = [round(r[2], 1) for r in agg_rows]
+    line_chart(agg_labels, {"Portfolio": agg_actual}, {"Portfolio": agg_planned}, single_label=("Actual", "Planned"))
 
 # ----------------------------------------------------------------------------
 # PAGE: CHEVES VALUE PACK
@@ -698,31 +712,38 @@ with tabs[0]:
 with tabs[1]:
     prow = df_portfolio[df_portfolio["Name"] == "Cheves Value Pack"].iloc[0]
     st.caption(f"Type {prow['Type']} · Development / Deployment")
-    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
+
+    CHEVES_ITEMS = MODULE_ITEMS["Cheves"]
+    overall = get_module_avg_at("Cheves", selected_week, "Progress%")
+    planned_avg = get_module_avg_at("Cheves", selected_week, "Planned%")
+    deviation = planned_avg - overall
+    open_tasks = sum(get_row("Cheves", it, selected_week)["OpenTickets"] if get_row("Cheves", it, selected_week) is not None else 0 for it in CHEVES_ITEMS)
+    closed_week = sum(get_row("Cheves", it, selected_week)["ClosedThisWeek"] if get_row("Cheves", it, selected_week) is not None else 0 for it in CHEVES_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        kpi_card("Overall Progress", f"{int(prow['Progress%'])}%", accent=C_OCEAN_BLUE)
+        kpi_card("Overall Progress", f"{overall}%", accent=C_OCEAN_BLUE)
     with c2:
-        kpi_card("Schedule Deviation", get_extra_kpi("Cheves", "Schedule Deviation"),
-                  accent=STATUS_COLORS["At Risk"], sub="vs. baseline plan")
+        kpi_card("Schedule Deviation", f"{deviation:+d} pts", accent=STATUS_COLORS["At Risk"], sub="Planned − Actual")
     with c3:
-        kpi_card("Open tasks", get_extra_kpi("Cheves", "Open tasks"), accent=C_WARM_SOIL)
+        kpi_card("Open Tasks", int(open_tasks), accent=C_WARM_SOIL)
     with c4:
-        kpi_card("Closed This Week", get_extra_kpi("Cheves", "Closed This Week"), accent=STATUS_COLORS["On Track"])
+        kpi_card("Closed This Week", int(closed_week), accent=STATUS_COLORS["On Track"])
 
-    CHEVES_ITEMS = get_items_for_module("Cheves")
     st.markdown("#### Progress by Sub-project, Phase, Status & Milestones")
     cols = st.columns(3)
     for col, item in zip(cols, CHEVES_ITEMS):
         with col:
-            project_like_card(item, get_phases_for("Cheves", item), get_milestones_for("Cheves", item),
-                               status=get_status_for("Cheves", item), compact=True)
+            r = get_row("Cheves", item, selected_week)
+            status = r["Status"] if r is not None and r["Status"] else "Pending"
+            project_like_card(item, get_phases_for("Cheves", item),
+                               get_milestones_for("Cheves", item, selected_week), status=status, compact=True)
 
-    st.markdown("#### Progress Trend — Planned vs Actual (last 8 weeks)")
+    st.markdown(f"#### Progress Trend — Planned vs Actual (Jan-W1 – {selected_week_label})")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in CHEVES_ITEMS:
-        labels, planned, actual = get_trend_for("Cheves", item)
+        labels, planned, actual = get_series("Cheves", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
     line_chart(labels, actual_dict, planned_dict)
@@ -733,15 +754,13 @@ with tabs[1]:
 with tabs[2]:
     prow = df_portfolio[df_portfolio["Name"] == "General Scaling"].iloc[0]
     st.caption(f"Type {prow['Type']} · Fleet-wide expansion: Cahua · Yaupi · Malpaso")
-    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
-    ROLLOUT_ITEMS = get_items_for_module("Rollout")
-    latest_actuals = {}
-    for item in ROLLOUT_ITEMS:
-        _, _, actual = get_trend_for("Rollout", item)
-        latest_actuals[item] = actual[-1]
-    overall = round(np.mean(list(latest_actuals.values())))
-    live_plants = sum(1 for v in latest_actuals.values() if v >= 60)
+    ROLLOUT_ITEMS = MODULE_ITEMS["Rollout"]
+    overall = get_module_avg_at("Rollout", selected_week, "Progress%")
+    live_plants = sum(1 for it in ROLLOUT_ITEMS
+                       if (get_row("Rollout", it, selected_week) is not None
+                           and get_row("Rollout", it, selected_week)["Progress%"] >= 60))
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -755,13 +774,15 @@ with tabs[2]:
     cols = st.columns(3)
     for col, item in zip(cols, ROLLOUT_ITEMS):
         with col:
-            project_like_card(item, get_phases_for("Rollout", item), get_milestones_for("Rollout", item),
-                               status=get_status_for("Rollout", item), compact=True)
+            r = get_row("Rollout", item, selected_week)
+            status = r["Status"] if r is not None and r["Status"] else "Pending"
+            project_like_card(item, get_phases_for("Rollout", item),
+                               get_milestones_for("Rollout", item, selected_week), status=status, compact=True)
 
-    st.markdown("#### Progress Trend by Plant — Planned vs Actual (last 8 weeks)")
+    st.markdown(f"#### Progress Trend by Plant — Planned vs Actual (Jan-W1 – {selected_week_label})")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in ROLLOUT_ITEMS:
-        labels, planned, actual = get_trend_for("Rollout", item)
+        labels, planned, actual = get_series("Rollout", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
     line_chart(labels, actual_dict, planned_dict)
@@ -772,16 +793,13 @@ with tabs[2]:
 with tabs[3]:
     prow = df_portfolio[df_portfolio["Name"] == "AI Models Integration Agent"].iloc[0]
     st.caption(f"O&M Agents · AI Models Integration Agent · Analytical & AI Models")
-    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
-    AI_ITEMS = get_items_for_module("AIAgents")
-    latest_actuals = {}
-    for item in AI_ITEMS:
-        _, _, actual = get_trend_for("AIAgents", item)
-        latest_actuals[item] = actual[-1]
-    overall = round(np.mean(list(latest_actuals.values())))
+    AI_ITEMS = MODULE_ITEMS["AIAgents"]
+    overall = get_module_avg_at("AIAgents", selected_week, "Progress%")
     deployment_vals = df_phases[(df_phases["Module"] == "AIAgents") & (df_phases["PhaseName"] == "Deployment")]
     in_prod = int((deployment_vals["Value%"] >= 60).sum())
+    closed_week = sum((get_row("AIAgents", it, selected_week)["ClosedThisWeek"] if get_row("AIAgents", it, selected_week) is not None else 0) for it in AI_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -791,7 +809,7 @@ with tabs[3]:
     with c3:
         kpi_card("Total Sub-agents", len(AI_ITEMS), accent=C_WARM_SOIL)
     with c4:
-        kpi_card("Adoption Rate", get_extra_kpi("AIAgents", "Adoption Rate"), accent=C_OCEAN_BLUE, sub="Across active plants")
+        kpi_card("Closed This Week", int(closed_week), accent=C_OCEAN_BLUE, sub="Tickets across sub-agents")
 
     st.markdown("#### Sub-agents: Progress, Phases, Status & Milestones")
     for row_start in range(0, len(AI_ITEMS), 2):
@@ -799,13 +817,15 @@ with tabs[3]:
         cols = st.columns(2)
         for col, item in zip(cols, row_items):
             with col:
-                project_like_card(item, get_phases_for("AIAgents", item), get_milestones_for("AIAgents", item),
-                                   status=get_status_for("AIAgents", item), compact=True)
+                r = get_row("AIAgents", item, selected_week)
+                status = r["Status"] if r is not None and r["Status"] else "Pending"
+                project_like_card(item, get_phases_for("AIAgents", item),
+                                   get_milestones_for("AIAgents", item, selected_week), status=status, compact=True)
 
-    st.markdown("#### Progress Trend by Sub-agent — Planned vs Actual (last 8 weeks)")
+    st.markdown(f"#### Progress Trend by Sub-agent — Planned vs Actual (Jan-W1 – {selected_week_label})")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in AI_ITEMS:
-        labels, planned, actual = get_trend_for("AIAgents", item)
+        labels, planned, actual = get_series("AIAgents", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
     line_chart(labels, actual_dict, planned_dict)
@@ -816,16 +836,13 @@ with tabs[3]:
 with tabs[4]:
     prow = df_portfolio[df_portfolio["Name"] == "SO Knowledge Integration Agent"].iloc[0]
     st.caption(f"O&M Agents · SO Knowledge Integration Agent · Documents & Knowledge Management")
-    st.caption(f"📅 Viewing as of: **{selected_month_label}** · weekly trend below shows the latest 8 weeks regardless of month filter")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
-    SO_ITEMS = get_items_for_module("SOKnowledge")
-    latest_actuals = {}
-    for item in SO_ITEMS:
-        _, _, actual = get_trend_for("SOKnowledge", item)
-        latest_actuals[item] = actual[-1]
-    overall = round(np.mean(list(latest_actuals.values())))
+    SO_ITEMS = MODULE_ITEMS["SOKnowledge"]
+    overall = get_module_avg_at("SOKnowledge", selected_week, "Progress%")
     deployment_vals = df_phases[(df_phases["Module"] == "SOKnowledge") & (df_phases["PhaseName"] == "Deployment")]
     in_prod = int((deployment_vals["Value%"] >= 60).sum())
+    closed_week = sum((get_row("SOKnowledge", it, selected_week)["ClosedThisWeek"] if get_row("SOKnowledge", it, selected_week) is not None else 0) for it in SO_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -835,19 +852,21 @@ with tabs[4]:
     with c3:
         kpi_card("Total Sub-agents", len(SO_ITEMS), accent=C_WARM_SOIL)
     with c4:
-        kpi_card("Documents Indexed", get_extra_kpi("SOKnowledge", "Documents Indexed"), accent=C_OCEAN_BLUE, sub="ACRs · O&M · Procedures")
+        kpi_card("Closed This Week", int(closed_week), accent=C_OCEAN_BLUE, sub="Tickets across sub-agents")
 
     st.markdown("#### Sub-agents: Progress, Phases, Status & Milestones")
     cols = st.columns(3)
     for col, item in zip(cols, SO_ITEMS):
         with col:
-            project_like_card(item, get_phases_for("SOKnowledge", item), get_milestones_for("SOKnowledge", item),
-                               status=get_status_for("SOKnowledge", item), compact=True)
+            r = get_row("SOKnowledge", item, selected_week)
+            status = r["Status"] if r is not None and r["Status"] else "Pending"
+            project_like_card(item, get_phases_for("SOKnowledge", item),
+                               get_milestones_for("SOKnowledge", item, selected_week), status=status, compact=True)
 
-    st.markdown("#### Progress Trend by Sub-agent — Planned vs Actual (last 8 weeks)")
+    st.markdown(f"#### Progress Trend by Sub-agent — Planned vs Actual (Jan-W1 – {selected_week_label})")
     labels, actual_dict, planned_dict = None, {}, {}
     for item in SO_ITEMS:
-        labels, planned, actual = get_trend_for("SOKnowledge", item)
+        labels, planned, actual = get_series("SOKnowledge", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
     line_chart(labels, actual_dict, planned_dict)
@@ -857,66 +876,61 @@ with tabs[4]:
 # ----------------------------------------------------------------------------
 with tabs[5]:
     prow = df_portfolio[df_portfolio["Name"] == "Data Governance MVP"].iloc[0]
-    st.caption(f"Type {prow['Type']} · {len(df_gov_domains)} domains × 5-stage maturity framework")
-    st.caption(f"📅 Viewing as of: **{selected_month_label}**")
+    domains = df_gov_domains_w["Domain"].unique().tolist()
+    st.caption(f"Type {prow['Type']} · {len(domains)} domains × 5-stage maturity framework")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     if "gov_selected_stage" not in st.session_state:
         st.session_state["gov_selected_stage"] = GOV_STAGES[0]
 
-    avg_stage_idx = int(round(df_gov_domains["Stage(0-4)"].mean()))
-    avg_planning = round(df_gov_domains["PlanningProgress%"].mean())
+    stage_vals, planning_vals = [], []
+    for d in domains:
+        r = get_gov_row(d, selected_week)
+        if r is not None:
+            stage_vals.append(r["Stage(0-4)"])
+            planning_vals.append(r["PlanningProgress%"])
+    avg_stage_idx = int(round(np.mean(stage_vals))) if stage_vals else 0
+    avg_planning = round(np.mean(planning_vals)) if planning_vals else 0
 
     g1, g2 = st.columns([0.72, 0.28])
     with g1:
         st.markdown("#### MVP Maturity Roadmap")
+        st.markdown('<div class="chevron-wrap">' + "".join(
+            f'<div class="chevron-step" style="background-color:{STATUS_COLORS["On Track"] if i < avg_stage_idx else (C_OCEAN_BLUE if i == avg_stage_idx else "#D9D6CF")};">{stage}</div>'
+            for i, stage in enumerate(GOV_STAGES)
+        ) + '</div>', unsafe_allow_html=True)
+        st.write("")
         stage_cols = st.columns(len(GOV_STAGES))
         for i, (col, stage) in enumerate(zip(stage_cols, GOV_STAGES)):
-            if i < avg_stage_idx:
-                bg = STATUS_COLORS["On Track"]
-            elif i == avg_stage_idx:
-                bg = C_OCEAN_BLUE
-            else:
-                bg = "#D9D6CF"
-            is_selected = st.session_state["gov_selected_stage"] == stage
             with col:
-                with st.container(key=f"gov_stage_box_{i}"):
-                    if st.button(stage, key=f"gov_stage_btn_{i}", use_container_width=True):
-                        st.session_state["gov_selected_stage"] = stage
-                st.markdown(
-                    _clean_html(f"""
-                    <style>
-                    div.st-key-gov_stage_box_{i} button {{
-                        background-color:{bg} !important;
-                        color:white !important;
-                        border:{'3px solid ' + C_BLACK if is_selected else '3px solid transparent'} !important;
-                        border-radius:8px !important;
-                        font-weight:700 !important;
-                        min-height:58px !important;
-                        white-space:normal !important;
-                    }}
-                    div.st-key-gov_stage_box_{i} button p,
-                    div.st-key-gov_stage_box_{i} button div {{ color:white !important; }}
-                    div.st-key-gov_stage_box_{i} button:hover {{ filter:brightness(0.93); }}
-                    </style>
-                    """),
-                    unsafe_allow_html=True,
-                )
+                if st.button(stage, key=f"gov_stage_btn_{i}", use_container_width=True):
+                    st.session_state["gov_selected_stage"] = stage
         with st.expander("ℹ️ Stage guide"):
             for _, r in df_gov_stage_info.iterrows():
                 st.markdown(f"**{int(r['StageOrder'])}. {r['StageName']}** — {r['Description']}")
     with g2:
         st.markdown("#### Overall Planning Progress")
-        gauge_chart(avg_planning, "All domains average", color=C_OCEAN_BLUE, height=200)
+        st.markdown(
+            _clean_html(f"""
+            <div class="kpi-card" style="--accent:{C_OCEAN_BLUE}; min-height:180px; align-items:center;">
+                <div class="kpi-label" style="text-align:center;">All domains average</div>
+                <div class="kpi-value" style="font-size:44px; text-align:center;">{avg_planning}%</div>
+            </div>
+            """),
+            unsafe_allow_html=True,
+        )
 
     selected_stage = st.session_state["gov_selected_stage"]
     selected_idx = GOV_STAGES.index(selected_stage)
 
     st.markdown("#### Domains — Cataloging, Ownership & Planning Progress")
-    cols = st.columns(len(df_gov_domains))
-    for col, (_, d) in zip(cols, df_gov_domains.iterrows()):
-        domain = d["Domain"]
-        stage_idx = int(d["Stage(0-4)"])
-        planning_pct = int(d["PlanningProgress%"])
+    cols = st.columns(len(domains))
+    for col, domain in zip(cols, domains):
+        r = get_gov_row(domain, selected_week)
+        stage_idx = int(r["Stage(0-4)"]) if r is not None else 0
+        cataloged = int(r["Cataloged%"]) if r is not None else 0
+        owner_pct = int(r["OwnerAssigned%"]) if r is not None else 0
+        planning_pct = int(r["PlanningProgress%"]) if r is not None else 0
         with col:
             st.markdown(
                 _clean_html(f"""
@@ -925,8 +939,8 @@ with tabs[5]:
                     <div style="font-size:12px; color:{C_TEXT_MUTED}; margin-bottom:10px;">
                         Stage {stage_idx + 1}: {GOV_STAGES[stage_idx]}
                     </div>
-                    <div style="font-size:12px;">Cataloged: <b>{int(d['Cataloged%'])}%</b></div>
-                    <div style="font-size:12px; margin-bottom:8px;">Owner assigned: <b>{int(d['OwnerAssigned%'])}%</b></div>
+                    <div style="font-size:12px;">Cataloged: <b>{cataloged}%</b></div>
+                    <div style="font-size:12px; margin-bottom:8px;">Owner assigned: <b>{owner_pct}%</b></div>
                     <div style="display:flex; justify-content:space-between; font-size:11.5px; color:{C_TEXT_MUTED};">
                         <span>Planning progress</span><span style="font-weight:600; color:{C_BLACK};">{planning_pct}%</span>
                     </div>
@@ -947,24 +961,21 @@ with tabs[5]:
 with tabs[6]:
     prow = df_portfolio[df_portfolio["Name"] == "Executive Dashboard"].iloc[0]
     st.caption(f"Type {prow['Type']} · Recurring monthly delivery to Management")
-    st.caption(f"📅 Viewing as of: **{selected_month_label}**")
+    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
-    kpis_completed = int((df_exec_kpis["Actual"] >= df_exec_kpis["Target"]).sum())
     status_map = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
     data_updated_done = status_map.get("Data Updated", "N") == "Y"
     sustentacion_done = status_map.get("Monthly Review", "N") == "Y"
     fap_done = status_map.get("FAP Presentation", "N") == "Y"
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3 = st.columns(3)
     with c1:
-        kpi_card("KPIs Completed", f"{kpis_completed}/{len(df_exec_kpis)}", accent=C_OCEAN_BLUE)
-    with c2:
         kpi_card("Data Updated", "Yes" if data_updated_done else "Pending",
                   accent=STATUS_COLORS["On Track"] if data_updated_done else STATUS_COLORS["Pending"])
-    with c3:
+    with c2:
         kpi_card("Monthly Review", "Completed" if sustentacion_done else "Pending",
                   accent=STATUS_COLORS["On Track"] if sustentacion_done else STATUS_COLORS["Pending"])
-    with c4:
+    with c3:
         kpi_card("FAP Presentation", "Done" if fap_done else "Pending",
                   accent=STATUS_COLORS["On Track"] if fap_done else STATUS_COLORS["Pending"])
 
@@ -989,21 +1000,14 @@ with tabs[6]:
         else:
             st.caption("Upload assets/actualizacion.jpg to display the reference diagram.")
 
-    st.markdown(f"#### Data Update Compliance — Planned vs Actual Day (through {selected_month_label})")
+    st.markdown(f"#### Data Update Compliance — Planned vs Actual Day (through {MONTH_ABBR[sel_month - 1]})")
     hist = df_exec_cycle_history.copy()
     hist["MonthNum"] = pd.to_datetime(hist["Month"], format="%b-%y").dt.month
-    hist = hist[hist["MonthNum"] <= selected_month]
-    hist["Compliance"] = np.where(hist["ActualDay"] <= hist["PlannedDay"], "On time", "Delayed")
+    hist = hist[hist["MonthNum"] <= sel_month]
+    hist = hist[hist["PlannedDay"] > 0]
     if hist.empty:
         st.caption("No cycle history available on or before the selected month.")
     else:
+        hist["Compliance"] = np.where(hist["ActualDay"] <= hist["PlannedDay"], "On time", "Delayed")
         cycle_compliance_chart(hist["Month"].tolist(), hist["PlannedDay"].tolist(), hist["ActualDay"].tolist(),
                                 hist["Compliance"].tolist())
-
-    st.markdown("#### Management KPIs (10)")
-    cols = st.columns(5)
-    for i, (_, k) in enumerate(df_exec_kpis.iterrows()):
-        completed = k["Actual"] >= k["Target"]
-        with cols[i % 5]:
-            kpi_card(k["Name"], f"{k['Actual']}", sub=f"Target: {k['Target']}",
-                      accent=STATUS_COLORS["On Track"] if completed else STATUS_COLORS["Pending"])
