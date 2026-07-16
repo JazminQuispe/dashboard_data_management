@@ -54,7 +54,7 @@ STATUS_BG = {
     "Pending": "#EFEEEA",
 }
 
-TREND_LINE_COLORS = [C_OCEAN_BLUE, C_WARM_SOIL, C_DESERT_SUN, C_RED_SOIL]
+TREND_LINE_COLORS = [C_OCEAN_BLUE, C_RED_SOIL, C_WARM_SOIL, C_DESERT_SUN, C_BLACK, C_SKY_BLUE]
 
 SCHEDULE_STATUS_COLORS = {
     "Not Started": "#B9B4AA",
@@ -132,10 +132,6 @@ st.markdown(
         .badge {{
             display: inline-block; padding: 3px 10px; border-radius: 6px;
             font-size: 11.5px; font-weight: 700; white-space: nowrap;
-        }}
-        .source-tag {{
-            font-size: 10.5px; padding: 2px 8px; border-radius: 5px; font-weight: 600;
-            background-color: {C_MIST}; color: {C_BLACK}; border: 1px solid {C_SKY_BLUE};
         }}
 
         .pbi-table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
@@ -385,7 +381,7 @@ def sparkline_chart(labels, values, color=C_OCEAN_BLUE, height=54, key=None):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
 
-def project_overview_card(name, description, status, source, trend_labels, trend_values, key=None):
+def project_overview_card(name, description, status, trend_labels, trend_values, key=None):
     color = STATUS_COLORS.get(status, "#8A8580")
     with st.container(border=True, key=f"projcard_{key}"):
         st.markdown(
@@ -406,8 +402,7 @@ def project_overview_card(name, description, status, source, trend_labels, trend
             last_val, last_label = "--", ""
         st.markdown(
             _clean_html(f"""
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-top:-4px;">
-                <span class="source-tag">{source}</span>
+            <div style="text-align:right; margin-top:-4px;">
                 <span style="font-size:11px; color:{C_TEXT_MUTED}; font-weight:600;">{last_val}% as of {last_label}</span>
             </div>
             """),
@@ -415,32 +410,36 @@ def project_overview_card(name, description, status, source, trend_labels, trend
         )
 
 
-def line_chart(labels, actual_series: dict, planned_series: dict = None, y_suffix="%", height=280,
-               single_label=("Actual", "Planned")):
+def _month_ticks(labels):
+    tickvals = [lbl for lbl in labels if lbl.endswith("-W1")]
+    ticktext = [lbl.split("-")[0] for lbl in tickvals]
+    return tickvals, ticktext
+
+
+def line_chart_multi(labels, actual_series: dict, planned_series: dict, height=280):
+    """Per-item trend: solid Actual + dotted Planned, same color per item.
+    The Planned trace shares its item's legend entry (toggling one hides both)."""
     fig = go.Figure()
-    multi = len(actual_series) > 1
     for i, (name, values) in enumerate(actual_series.items()):
         color = TREND_LINE_COLORS[i % len(TREND_LINE_COLORS)]
-        actual_name = name if multi else single_label[0]
+        if name in planned_series:
+            fig.add_trace(go.Scatter(
+                x=labels, y=planned_series[name], name=f"{name} (plan)", mode="lines",
+                line=dict(color=color, width=1.75, dash="dot"), opacity=0.55,
+                legendgroup=name, showlegend=False, hoverinfo="skip",
+            ))
         fig.add_trace(go.Scatter(
-            x=labels, y=values, name=actual_name, mode="lines+markers",
-            line=dict(color=color, width=3), marker=dict(size=6, color=color),
+            x=labels, y=values, name=name, mode="lines+markers",
+            line=dict(color=color, width=2.5), marker=dict(size=4, color=color),
             legendgroup=name,
         ))
-        if planned_series and name in planned_series:
-            planned_name = f"{name} (plan)" if multi else single_label[1]
-            fig.add_trace(go.Scatter(
-                x=labels, y=planned_series[name], name=planned_name, mode="lines",
-                line=dict(color=color, width=2, dash="dot"), opacity=0.55,
-                legendgroup=name,
-            ))
+    tickvals, ticktext = _month_ticks(labels)
     fig.update_layout(
-        height=height,
-        margin=dict(l=10, r=10, t=30, b=10),
+        height=height, margin=dict(l=10, r=10, t=30, b=10),
         plot_bgcolor="white", paper_bgcolor="white",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        yaxis=dict(gridcolor="#EDEDED", ticksuffix=y_suffix if y_suffix else ""),
-        xaxis=dict(showgrid=False),
+        yaxis=dict(gridcolor="#EDEDED", ticksuffix="%"),
+        xaxis=dict(showgrid=False, tickmode="array", tickvals=tickvals, ticktext=ticktext),
         font=dict(color=C_BLACK, family="Inter"),
     )
     st.plotly_chart(fig, use_container_width=True)
@@ -586,17 +585,14 @@ with h3:
 # ----------------------------------------------------------------------------
 # GLOBAL MONTH + WEEK FILTER — drives every tab, always cumulative from Week 1
 # ----------------------------------------------------------------------------
-f1, f2, f3 = st.columns([0.16, 0.14, 0.70])
+f1, f2 = st.columns([0.16, 0.14])
 with f1:
-    sel_month = st.selectbox("📅 Month filter (applies to every tab)", options=list(range(1, 13)),
+    sel_month = st.selectbox("📅 Month", options=list(range(1, 13)),
                               format_func=lambda m: MONTH_ABBR[m - 1], index=5)
 with f2:
     sel_week_in_month = st.selectbox("Week", options=[1, 2, 3, 4], format_func=lambda w: f"W{w}", index=3)
 selected_week = (sel_month - 1) * 4 + sel_week_in_month
 selected_week_label = week_label(selected_week)
-with f3:
-    st.caption(f"Showing data accumulated from **Jan-W1** through **{selected_week_label}** in every tab below. "
-               f"Weeks beyond Jun-W4 are still placeholders at 0 — fill them in weekly in Weekly_Data.")
 
 st.write("")
 
@@ -638,7 +634,6 @@ with tabs[0]:
     else:
         st.markdown("<h1 style='text-align:center;'>Portfolio Overview</h1>", unsafe_allow_html=True)
 
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     prev_week = max(1, selected_week - 6)
     active_6w = 0
@@ -686,25 +681,17 @@ with tabs[0]:
         with proj_cols[i % 3]:
             cur = get_row("Portfolio", p["Name"], selected_week)
             status = cur["Status"] if cur is not None and cur["Status"] else "Pending"
-            project_overview_card(p["Name"], p["Description"], status, p["Source"], labels, actuals,
+            project_overview_card(p["Name"], p["Description"], status, labels, actuals,
                                    key=p["ProjectID"])
             st.write("")
 
-    st.markdown(f"#### Portfolio Progress — Planned vs Actual (Jan-W1 – {selected_week_label})")
-    agg_rows = []
-    for w in range(1, selected_week + 1):
-        planned_vals, actual_vals = [], []
-        for name in MODULE_ITEMS["Portfolio"]:
-            r = get_row("Portfolio", name, w)
-            if r is not None:
-                planned_vals.append(r["Planned%"])
-                actual_vals.append(r["Progress%"])
-        agg_rows.append((week_label(w), np.mean(planned_vals) if planned_vals else 0,
-                          np.mean(actual_vals) if actual_vals else 0))
-    agg_labels = [r[0] for r in agg_rows]
-    agg_planned = [round(r[1], 1) for r in agg_rows]
-    agg_actual = [round(r[2], 1) for r in agg_rows]
-    line_chart(agg_labels, {"Portfolio": agg_actual}, {"Portfolio": agg_planned}, single_label=("Actual", "Planned"))
+    st.markdown(f"#### Portfolio Progress by Project — Planned vs Actual (Jan-W1 – {selected_week_label})")
+    labels, actual_dict, planned_dict = None, {}, {}
+    for name in MODULE_ITEMS["Portfolio"]:
+        labels, planned, actual = get_series("Portfolio", name, selected_week)
+        actual_dict[name] = actual
+        planned_dict[name] = planned
+    line_chart_multi(labels, actual_dict, planned_dict)
 
 # ----------------------------------------------------------------------------
 # PAGE: CHEVES VALUE PACK
@@ -712,7 +699,6 @@ with tabs[0]:
 with tabs[1]:
     prow = df_portfolio[df_portfolio["Name"] == "Cheves Value Pack"].iloc[0]
     st.caption(f"Type {prow['Type']} · Development / Deployment")
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     CHEVES_ITEMS = MODULE_ITEMS["Cheves"]
     overall = get_module_avg_at("Cheves", selected_week, "Progress%")
@@ -746,7 +732,7 @@ with tabs[1]:
         labels, planned, actual = get_series("Cheves", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
-    line_chart(labels, actual_dict, planned_dict)
+    line_chart_multi(labels, actual_dict, planned_dict)
 
 # ----------------------------------------------------------------------------
 # PAGE: GENERAL SCALING
@@ -754,7 +740,6 @@ with tabs[1]:
 with tabs[2]:
     prow = df_portfolio[df_portfolio["Name"] == "General Scaling"].iloc[0]
     st.caption(f"Type {prow['Type']} · Fleet-wide expansion: Cahua · Yaupi · Malpaso")
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     ROLLOUT_ITEMS = MODULE_ITEMS["Rollout"]
     overall = get_module_avg_at("Rollout", selected_week, "Progress%")
@@ -785,7 +770,7 @@ with tabs[2]:
         labels, planned, actual = get_series("Rollout", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
-    line_chart(labels, actual_dict, planned_dict)
+    line_chart_multi(labels, actual_dict, planned_dict)
 
 # ----------------------------------------------------------------------------
 # PAGE: AI MODELS INTEGRATION AGENT
@@ -793,7 +778,6 @@ with tabs[2]:
 with tabs[3]:
     prow = df_portfolio[df_portfolio["Name"] == "AI Models Integration Agent"].iloc[0]
     st.caption(f"O&M Agents · AI Models Integration Agent · Analytical & AI Models")
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     AI_ITEMS = MODULE_ITEMS["AIAgents"]
     overall = get_module_avg_at("AIAgents", selected_week, "Progress%")
@@ -828,7 +812,7 @@ with tabs[3]:
         labels, planned, actual = get_series("AIAgents", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
-    line_chart(labels, actual_dict, planned_dict)
+    line_chart_multi(labels, actual_dict, planned_dict)
 
 # ----------------------------------------------------------------------------
 # PAGE: SO KNOWLEDGE INTEGRATION AGENT
@@ -836,7 +820,6 @@ with tabs[3]:
 with tabs[4]:
     prow = df_portfolio[df_portfolio["Name"] == "SO Knowledge Integration Agent"].iloc[0]
     st.caption(f"O&M Agents · SO Knowledge Integration Agent · Documents & Knowledge Management")
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     SO_ITEMS = MODULE_ITEMS["SOKnowledge"]
     overall = get_module_avg_at("SOKnowledge", selected_week, "Progress%")
@@ -869,7 +852,7 @@ with tabs[4]:
         labels, planned, actual = get_series("SOKnowledge", item, selected_week)
         actual_dict[item] = actual
         planned_dict[item] = planned
-    line_chart(labels, actual_dict, planned_dict)
+    line_chart_multi(labels, actual_dict, planned_dict)
 
 # ----------------------------------------------------------------------------
 # PAGE: DATA GOVERNANCE
@@ -878,7 +861,6 @@ with tabs[5]:
     prow = df_portfolio[df_portfolio["Name"] == "Data Governance MVP"].iloc[0]
     domains = df_gov_domains_w["Domain"].unique().tolist()
     st.caption(f"Type {prow['Type']} · {len(domains)} domains × 5-stage maturity framework")
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     if "gov_selected_stage" not in st.session_state:
         st.session_state["gov_selected_stage"] = GOV_STAGES[0]
@@ -961,7 +943,6 @@ with tabs[5]:
 with tabs[6]:
     prow = df_portfolio[df_portfolio["Name"] == "Executive Dashboard"].iloc[0]
     st.caption(f"Type {prow['Type']} · Recurring monthly delivery to Management")
-    st.caption(f"📅 Viewing as of: **{selected_week_label}**")
 
     status_map = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
     data_updated_done = status_map.get("Data Updated", "N") == "Y"
@@ -995,8 +976,6 @@ with tabs[6]:
         st.markdown("#### Timeline")
         if os.path.exists(CYCLE_DIAGRAM_PATH):
             st.image(CYCLE_DIAGRAM_PATH, use_container_width=True)
-            st.caption("End of month → 14 days → Data Updated → 1 day → Dashboard Update "
-                       "→ Monthly Review → 15 days → FAP (4th week)")
         else:
             st.caption("Upload assets/actualizacion.jpg to display the reference diagram.")
 
