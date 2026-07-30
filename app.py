@@ -41,27 +41,19 @@ C_GREY_BG = "#FAFAF8"
 C_GREY_BORDER = "#E7E5DF"
 C_TEXT_MUTED = "#6B6459"
 
-STATUS_COLORS = {
-    "On Track": "#1E8E5A",
-    "At Risk": "#C77700",
-    "Delayed": "#C0392B",
-    "Pending": "#8A8580",
-}
-STATUS_BG = {
-    "On Track": "#E6F4EC",
-    "At Risk": "#FCEFDD",
-    "Delayed": "#FBE7E4",
-    "Pending": "#EFEEEA",
-}
-
-TREND_LINE_COLORS = [C_OCEAN_BLUE, C_RED_SOIL, C_WARM_SOIL, C_DESERT_SUN, C_BLACK, C_SKY_BLUE]
-
 SCHEDULE_STATUS_COLORS = {
     "Not Started": "#B9B4AA",
     "No Deviation": "#1E8E5A",
     "Moderate Deviation": "#C77700",
     "Critical Deviation": "#8B1E1E",
     "Stopped": "#ADDFFD",
+}
+SCHEDULE_STATUS_BG = {
+    "Not Started": "#EFEEEA",
+    "No Deviation": "#E6F4EC",
+    "Moderate Deviation": "#FCEFDD",
+    "Critical Deviation": "#FBE7E4",
+    "Stopped": "#DFF3FF",
 }
 SCHEDULE_STATUS_LABELS = {
     "Not Started": "Not Started",
@@ -71,6 +63,8 @@ SCHEDULE_STATUS_LABELS = {
     "Stopped": "Stopped",
 }
 
+TREND_LINE_COLORS = [C_OCEAN_BLUE, C_RED_SOIL, C_WARM_SOIL, C_DESERT_SUN, C_BLACK, C_SKY_BLUE]
+
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 BASE_DIR = os.path.dirname(__file__)
@@ -79,6 +73,7 @@ DATA_FILE = os.path.join(BASE_DIR, "data_source.xlsx")
 LOGO_PATH = os.path.join(BASE_DIR, "logo_stk.png")
 CHEVES_BG_PATH = os.path.join(ASSETS_DIR, "cheves_bg.jpg")
 CYCLE_DIAGRAM_PATH = os.path.join(ASSETS_DIR, "actualizacion.jpg")
+CHEVES_FLOW_PATH = os.path.join(ASSETS_DIR, "flujo.png")
 
 # ----------------------------------------------------------------------------
 # GLOBAL CSS
@@ -228,17 +223,23 @@ df_weekly = sheets["Weekly_Data"]
 df_phases = sheets["Phases"]
 df_milestones = sheets["Milestones"]
 df_gov_domains_w = sheets["Governance_Domains"]
-df_gov_stage_info = sheets["Governance_StageInfo"].sort_values("StageOrder")
 df_gov_datasets = sheets["Governance_Datasets"]
-df_gov_ownership = sheets["Governance_Ownership"]
-df_gov_quality = sheets["Governance_QualityRules"]
-df_gov_pipeline = sheets["Governance_Pipeline"]
-df_gov_monitoring = sheets["Governance_Monitoring"]
-df_exec_cycle_config = sheets["Executive_Cycle_Config"].sort_values("Order")
-df_exec_cycle_status = sheets["Executive_Cycle_Status"]
+df_exec_cycle = sheets["Executive_Cycle_Current"].sort_values("Order")
 df_exec_cycle_history = sheets["Executive_Cycle_History"]
 
-GOV_STAGES = df_gov_stage_info["StageName"].tolist()
+# Governance_StageInfo was merged into the Instructions sheet as plain text
+# (it never changed week to week), so the 5 stages live here now.
+GOV_STAGES = [
+    "Inventory & Prioritization", "Ownership Definition", "Data Quality Rules",
+    "Pipeline & Dashboard Implementation", "Monitoring & Continuous Improvement",
+]
+GOV_STAGE_DESCRIPTIONS = {
+    "Inventory & Prioritization": "Identify and prioritize the domain's critical datasets that must be governed first.",
+    "Ownership Definition": "Assign an accountable data owner and steward to each prioritized dataset.",
+    "Data Quality Rules": "Define measurable quality rules and thresholds for each critical dataset.",
+    "Pipeline & Dashboard Implementation": "Automate the data pipeline and build the dashboard that exposes the governed data.",
+    "Monitoring & Continuous Improvement": "Track data quality over time and resolve recurring issues through a backlog.",
+}
 
 _weekly_idx = df_weekly.set_index(["Module", "Item", "Week"]).sort_index()
 _gov_idx = df_gov_domains_w.set_index(["Domain", "Week"]).sort_index()
@@ -278,11 +279,14 @@ def get_series(module, item, upto_week):
 
 
 def get_module_avg_at(module, week, col="Progress%"):
+    # Progress%/Planned% for weeks 25+ are formula-driven from Tasks and read
+    # back as NaN until a ticket exists for that item — skip those rather
+    # than let a single NaN poison the whole average.
     items = MODULE_ITEMS[module]
     vals = []
     for it in items:
         r = get_row(module, it, week)
-        if r is not None:
+        if r is not None and pd.notna(r[col]):
             vals.append(r[col])
     return round(np.mean(vals)) if vals else 0
 
@@ -301,9 +305,14 @@ def get_gov_series(domain, upto_week):
     return labels, d["Planned%"].tolist() if "Planned%" in d.columns else None, d["PlanningProgress%"].tolist()
 
 
-def get_phases_for(module, item):
-    d = df_phases[(df_phases["Module"] == module) & (df_phases["Item"] == item)].sort_values("PhaseOrder")
-    return dict(zip(d["PhaseName"], d["Value%"]))
+def get_phases_for(module, item, upto_week):
+    # Phases is now a weekly series (like Weekly_Data). Weeks 1-24 have no
+    # history (this sheet didn't track weekly progress before), so those
+    # show 0 rather than a fabricated number. Weeks 25+ are formula-driven
+    # from Tasks and may also be 0 until tickets are logged for that phase.
+    d = df_phases[(df_phases["Module"] == module) & (df_phases["Item"] == item) & (df_phases["Week"] == upto_week)]
+    d = d.sort_values("PhaseOrder")
+    return {row["PhaseName"]: (0 if pd.isna(row["Progress%"]) else row["Progress%"]) for _, row in d.iterrows()}
 
 
 def get_milestones_for(module, item, upto_week):
@@ -325,8 +334,8 @@ def get_base64(path):
 # UI HELPERS
 # ----------------------------------------------------------------------------
 def badge(text):
-    color = STATUS_COLORS.get(text, "#8A8580")
-    bg = STATUS_BG.get(text, "#EFEEEA")
+    color = SCHEDULE_STATUS_COLORS.get(text, "#8A8580")
+    bg = SCHEDULE_STATUS_BG.get(text, "#EFEEEA")
     return f'<span class="badge" style="background-color:{bg}; color:{color};">{text}</span>'
 
 
@@ -381,8 +390,30 @@ def sparkline_chart(labels, values, color=C_OCEAN_BLUE, height=54, key=None):
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
 
 
-def project_overview_card(name, description, status, trend_labels, trend_values, key=None):
-    color = STATUS_COLORS.get(status, "#8A8580")
+def gauge_chart(progress, planned, color=C_OCEAN_BLUE, height=130, key=None):
+    """Half-donut gauge: big number = cumulative Progress% as of the selected
+    week; the thin marker on the arc = Planned% for the same week."""
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=progress,
+        number={"suffix": "%", "font": {"size": 30, "color": C_BLACK}},
+        gauge={
+            "axis": {"range": [0, 100], "visible": False},
+            "bar": {"color": color, "thickness": 0.85},
+            "bgcolor": C_GREY_BORDER,
+            "borderwidth": 0,
+            "threshold": {"line": {"color": C_WARM_SOIL, "width": 3}, "thickness": 0.85, "value": planned},
+        },
+    ))
+    fig.update_layout(
+        height=height, margin=dict(l=14, r=14, t=6, b=0),
+        paper_bgcolor="white", font=dict(family="Inter"),
+    )
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False}, key=key)
+
+
+def project_overview_card(name, description, status, progress, planned, week_label_str, key=None):
+    color = SCHEDULE_STATUS_COLORS.get(status, "#8A8580")
     with st.container(border=True, key=f"projcard_{key}"):
         st.markdown(
             _clean_html(f"""
@@ -394,16 +425,13 @@ def project_overview_card(name, description, status, trend_labels, trend_values,
             """),
             unsafe_allow_html=True,
         )
-        if trend_values:
-            sparkline_chart(trend_labels, trend_values, color=C_OCEAN_BLUE, height=52, key=f"spark_{key}")
-            last_val, last_label = trend_values[-1], trend_labels[-1]
-        else:
-            st.caption("No trend data yet.")
-            last_val, last_label = "--", ""
+        gauge_chart(progress, planned, key=f"gauge_{key}")
         st.markdown(
             _clean_html(f"""
-            <div style="text-align:right; margin-top:-4px;">
-                <span style="font-size:11px; color:{C_TEXT_MUTED}; font-weight:600;">{last_val}% as of {last_label}</span>
+            <div style="text-align:center; margin-top:-10px;">
+                <span style="font-size:11px; color:{C_TEXT_MUTED}; font-weight:600;">
+                    Planned: {planned}% · as of {week_label_str}
+                </span>
             </div>
             """),
             unsafe_allow_html=True,
@@ -446,7 +474,7 @@ def line_chart_multi(labels, actual_series: dict, planned_series: dict, height=2
 
 
 def cycle_compliance_chart(months, planned, actual, compliance, height=280):
-    colors = [STATUS_COLORS["On Track"] if c == "On time" else STATUS_COLORS["Delayed"] for c in compliance]
+    colors = [SCHEDULE_STATUS_COLORS["No Deviation"] if c == "On time" else SCHEDULE_STATUS_COLORS["Critical Deviation"] for c in compliance]
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=months, y=planned, name="Planned (day 14)", mode="lines",
@@ -489,7 +517,7 @@ def phase_bars(title, phase_values: dict, compact=False):
 
 def checklist_item(label, target, done):
     icon = "✅" if done else "⬜"
-    status = badge("On Track" if done else "Pending")
+    status = badge("No Deviation" if done else "Not Started")
     st.markdown(
         _clean_html(f"""
         <div class="checklist-row">
@@ -523,41 +551,45 @@ def project_like_card(name, phases, milestones, status=None, compact=True):
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_gov_stage_detail(domain, stage):
+def render_gov_stage_detail(domain, stage, upto_week):
+    # Governance_Ownership / QualityRules / Pipeline / Monitoring / StageInfo no
+    # longer exist as separate sheets — Ownership+QualityRules are now columns
+    # on Governance_Datasets, and Pipeline+Monitoring are now columns on the
+    # weekly Governance_Domains sheet (read via get_gov_row, same as the rest
+    # of this tab, so it respects the selected week).
     if stage == "Inventory & Prioritization":
-        df = df_gov_datasets[df_gov_datasets["Domain"] == domain].drop(columns="Domain")
+        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Criticality", "Use"]]
         st.markdown("**Critical Datasets Inventory**")
         st.caption("No datasets cataloged yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Ownership Definition":
-        df = df_gov_ownership[df_gov_ownership["Domain"] == domain].drop(columns="Domain")
+        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Owner", "Steward"]].dropna(subset=["Owner"])
         st.markdown("**Ownership Matrix**")
         st.caption("No ownership defined yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Data Quality Rules":
-        df = df_gov_quality[df_gov_quality["Domain"] == domain].drop(columns="Domain")
+        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "QualityRule", "Threshold"]].dropna(subset=["QualityRule"])
         st.markdown("**Quality Rules**")
         st.caption("No quality rules defined yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Pipeline & Dashboard Implementation":
-        row = df_gov_pipeline[df_gov_pipeline["Domain"] == domain]
-        if row.empty:
+        row = get_gov_row(domain, upto_week)
+        if row is None:
             st.caption("No pipeline info yet for this domain.")
         else:
-            info = row.iloc[0]
-            st.markdown(f"**Pipeline status:** {badge(info['PipelineStatus'])}", unsafe_allow_html=True)
-            st.markdown(f"**Dashboard status:** {badge(info['DashboardStatus'])}", unsafe_allow_html=True)
-            st.caption(info["Notes"])
+            st.markdown(f"**Pipeline status:** {badge(row['PipelineStatus'])}", unsafe_allow_html=True)
+            st.markdown(f"**Dashboard status:** {badge(row['DashboardStatus'])}", unsafe_allow_html=True)
+            if pd.notna(row.get("Notes")):
+                st.caption(row["Notes"])
 
     elif stage == "Monitoring & Continuous Improvement":
-        row = df_gov_monitoring[df_gov_monitoring["Domain"] == domain]
-        if row.empty:
+        row = get_gov_row(domain, upto_week)
+        if row is None:
             st.caption("No monitoring info yet for this domain.")
         else:
-            info = row.iloc[0]
             st.markdown(
-                f"**Datasets OK:** {int(info['DatasetsOK%'])}% · **Issues:** {int(info['Issues'])} · "
-                f"Backlog items: {int(info['Backlog'])}"
+                f"**Datasets OK:** {int(row['DatasetsOK%'])}% · **Issues:** {int(row['Issues'])} · "
+                f"Backlog items: {int(row['Backlog'])}"
             )
 
 
@@ -577,9 +609,6 @@ with h2:
         unsafe_allow_html=True,
     )
 with h3:
-    if st.button("🔄 Refresh data", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
     st.caption(f"Source updated: {datetime.fromtimestamp(os.path.getmtime(DATA_FILE)).strftime('%b %d, %Y %H:%M')}")
 
 # ----------------------------------------------------------------------------
@@ -642,8 +671,8 @@ with tabs[0]:
     for name in MODULE_ITEMS["Portfolio"]:
         cur = get_row("Portfolio", name, selected_week)
         prev = get_row("Portfolio", name, prev_week)
-        cur_prog = cur["Progress%"] if cur is not None else 0
-        prev_prog = prev["Progress%"] if prev is not None else 0
+        cur_prog = cur["Progress%"] if cur is not None and pd.notna(cur["Progress%"]) else 0
+        prev_prog = prev["Progress%"] if prev is not None and pd.notna(prev["Progress%"]) else 0
         if (selected_week <= 6 and cur_prog > 0) or (cur_prog - prev_prog) > 0:
             active_6w += 1
         if cur is not None and cur["ScheduleStatus"] in sched_counts:
@@ -652,11 +681,10 @@ with tabs[0]:
             progress_vals.append(cur_prog)
     avg_progress = round(np.mean(progress_vals)) if progress_vals else 0
 
-    cfg = df_exec_cycle_config
-    status_map_exec = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
+    cfg = df_exec_cycle
     next_ms = None
     for _, r in cfg.iterrows():
-        if status_map_exec.get(r["Milestone"], "N") != "Y":
+        if r["Done"] != "Y":
             next_ms = r
             break
     if next_ms is None:
@@ -677,12 +705,13 @@ with tabs[0]:
     st.markdown("#### Projects")
     proj_cols = st.columns(3)
     for i, (_, p) in enumerate(df_portfolio.iterrows()):
-        labels, _, actuals = get_series("Portfolio", p["Name"], selected_week)
         with proj_cols[i % 3]:
             cur = get_row("Portfolio", p["Name"], selected_week)
-            status = cur["Status"] if cur is not None and cur["Status"] else "Pending"
-            project_overview_card(p["Name"], p["Description"], status, labels, actuals,
-                                   key=p["ProjectID"])
+            status = cur["ScheduleStatus"] if cur is not None and cur["ScheduleStatus"] else "Not Started"
+            progress = 0 if cur is None or pd.isna(cur["Progress%"]) else round(cur["Progress%"])
+            planned = 0 if cur is None or pd.isna(cur["Planned%"]) else round(cur["Planned%"])
+            project_overview_card(p["Name"], p["Description"], status, progress, planned,
+                                   selected_week_label, key=p["ProjectID"])
             st.write("")
 
     st.markdown(f"#### Portfolio Progress by Project — Planned vs Actual (Jan-W1 – {selected_week_label})")
@@ -699,6 +728,9 @@ with tabs[0]:
 with tabs[1]:
     prow = df_portfolio[df_portfolio["Name"] == "Cheves Value Pack"].iloc[0]
     st.caption(f"Type {prow['Type']} · Development / Deployment")
+    if os.path.exists(CHEVES_FLOW_PATH):
+        with st.expander("📊 Metodología del proyecto (CRISP-DM)"):
+            st.image(CHEVES_FLOW_PATH, use_container_width=True)
 
     CHEVES_ITEMS = MODULE_ITEMS["Cheves"]
     overall = get_module_avg_at("Cheves", selected_week, "Progress%")
@@ -711,19 +743,19 @@ with tabs[1]:
     with c1:
         kpi_card("Overall Progress", f"{overall}%", accent=C_OCEAN_BLUE)
     with c2:
-        kpi_card("Schedule Deviation", f"{deviation:+d} pts", accent=STATUS_COLORS["At Risk"], sub="Planned − Actual")
+        kpi_card("Schedule Deviation", f"{deviation:+d} pts", accent=SCHEDULE_STATUS_COLORS["Moderate Deviation"], sub="Planned − Actual")
     with c3:
         kpi_card("Open Tasks", int(open_tasks), accent=C_WARM_SOIL)
     with c4:
-        kpi_card("Closed This Week", int(closed_week), accent=STATUS_COLORS["On Track"])
+        kpi_card("Closed This Week", int(closed_week), accent=SCHEDULE_STATUS_COLORS["No Deviation"])
 
     st.markdown("#### Progress by Sub-project, Phase, Status & Milestones")
     cols = st.columns(3)
     for col, item in zip(cols, CHEVES_ITEMS):
         with col:
             r = get_row("Cheves", item, selected_week)
-            status = r["Status"] if r is not None and r["Status"] else "Pending"
-            project_like_card(item, get_phases_for("Cheves", item),
+            status = r["ScheduleStatus"] if r is not None and r["ScheduleStatus"] else "Not Started"
+            project_like_card(item, get_phases_for("Cheves", item, selected_week),
                                get_milestones_for("Cheves", item, selected_week), status=status, compact=True)
 
     st.markdown(f"#### Progress Trend — Planned vs Actual (Jan-W1 – {selected_week_label})")
@@ -751,7 +783,7 @@ with tabs[2]:
     with c1:
         kpi_card("Overall Scaling Progress", f"{overall}%", accent=C_OCEAN_BLUE)
     with c2:
-        kpi_card("Plants Near Go-live", live_plants, accent=STATUS_COLORS["On Track"])
+        kpi_card("Plants Near Go-live", live_plants, accent=SCHEDULE_STATUS_COLORS["No Deviation"])
     with c3:
         kpi_card("Total Plants", len(ROLLOUT_ITEMS), accent=C_WARM_SOIL)
 
@@ -760,8 +792,8 @@ with tabs[2]:
     for col, item in zip(cols, ROLLOUT_ITEMS):
         with col:
             r = get_row("Rollout", item, selected_week)
-            status = r["Status"] if r is not None and r["Status"] else "Pending"
-            project_like_card(item, get_phases_for("Rollout", item),
+            status = r["ScheduleStatus"] if r is not None and r["ScheduleStatus"] else "Not Started"
+            project_like_card(item, get_phases_for("Rollout", item, selected_week),
                                get_milestones_for("Rollout", item, selected_week), status=status, compact=True)
 
     st.markdown(f"#### Progress Trend by Plant — Planned vs Actual (Jan-W1 – {selected_week_label})")
@@ -781,15 +813,15 @@ with tabs[3]:
 
     AI_ITEMS = MODULE_ITEMS["AIAgents"]
     overall = get_module_avg_at("AIAgents", selected_week, "Progress%")
-    deployment_vals = df_phases[(df_phases["Module"] == "AIAgents") & (df_phases["PhaseName"] == "Deployment")]
-    in_prod = int((deployment_vals["Value%"] >= 60).sum())
+    deployment_vals = df_phases[(df_phases["Module"] == "AIAgents") & (df_phases["PhaseName"] == "Deployment") & (df_phases["Week"] == selected_week)]
+    in_prod = int((deployment_vals["Progress%"].fillna(0) >= 60).sum())
     closed_week = sum((get_row("AIAgents", it, selected_week)["ClosedThisWeek"] if get_row("AIAgents", it, selected_week) is not None else 0) for it in AI_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         kpi_card("Overall Progress", f"{overall}%", accent=C_OCEAN_BLUE)
     with c2:
-        kpi_card("Sub-agents in Production", in_prod, accent=STATUS_COLORS["On Track"])
+        kpi_card("Sub-agents in Production", in_prod, accent=SCHEDULE_STATUS_COLORS["No Deviation"])
     with c3:
         kpi_card("Total Sub-agents", len(AI_ITEMS), accent=C_WARM_SOIL)
     with c4:
@@ -802,8 +834,8 @@ with tabs[3]:
         for col, item in zip(cols, row_items):
             with col:
                 r = get_row("AIAgents", item, selected_week)
-                status = r["Status"] if r is not None and r["Status"] else "Pending"
-                project_like_card(item, get_phases_for("AIAgents", item),
+                status = r["ScheduleStatus"] if r is not None and r["ScheduleStatus"] else "Not Started"
+                project_like_card(item, get_phases_for("AIAgents", item, selected_week),
                                    get_milestones_for("AIAgents", item, selected_week), status=status, compact=True)
 
     st.markdown(f"#### Progress Trend by Sub-agent — Planned vs Actual (Jan-W1 – {selected_week_label})")
@@ -823,15 +855,15 @@ with tabs[4]:
 
     SO_ITEMS = MODULE_ITEMS["SOKnowledge"]
     overall = get_module_avg_at("SOKnowledge", selected_week, "Progress%")
-    deployment_vals = df_phases[(df_phases["Module"] == "SOKnowledge") & (df_phases["PhaseName"] == "Deployment")]
-    in_prod = int((deployment_vals["Value%"] >= 60).sum())
+    deployment_vals = df_phases[(df_phases["Module"] == "SOKnowledge") & (df_phases["PhaseName"] == "Deployment") & (df_phases["Week"] == selected_week)]
+    in_prod = int((deployment_vals["Progress%"].fillna(0) >= 60).sum())
     closed_week = sum((get_row("SOKnowledge", it, selected_week)["ClosedThisWeek"] if get_row("SOKnowledge", it, selected_week) is not None else 0) for it in SO_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         kpi_card("Overall Progress", f"{overall}%", accent=C_OCEAN_BLUE)
     with c2:
-        kpi_card("Sub-agents in Production", in_prod, accent=STATUS_COLORS["On Track"])
+        kpi_card("Sub-agents in Production", in_prod, accent=SCHEDULE_STATUS_COLORS["No Deviation"])
     with c3:
         kpi_card("Total Sub-agents", len(SO_ITEMS), accent=C_WARM_SOIL)
     with c4:
@@ -842,8 +874,8 @@ with tabs[4]:
     for col, item in zip(cols, SO_ITEMS):
         with col:
             r = get_row("SOKnowledge", item, selected_week)
-            status = r["Status"] if r is not None and r["Status"] else "Pending"
-            project_like_card(item, get_phases_for("SOKnowledge", item),
+            status = r["ScheduleStatus"] if r is not None and r["ScheduleStatus"] else "Not Started"
+            project_like_card(item, get_phases_for("SOKnowledge", item, selected_week),
                                get_milestones_for("SOKnowledge", item, selected_week), status=status, compact=True)
 
     st.markdown(f"#### Progress Trend by Sub-agent — Planned vs Actual (Jan-W1 – {selected_week_label})")
@@ -878,7 +910,7 @@ with tabs[5]:
     with g1:
         st.markdown("#### MVP Maturity Roadmap")
         st.markdown('<div class="chevron-wrap">' + "".join(
-            f'<div class="chevron-step" style="background-color:{STATUS_COLORS["On Track"] if i < avg_stage_idx else (C_OCEAN_BLUE if i == avg_stage_idx else "#D9D6CF")};">{stage}</div>'
+            f'<div class="chevron-step" style="background-color:{SCHEDULE_STATUS_COLORS["No Deviation"] if i < avg_stage_idx else (C_OCEAN_BLUE if i == avg_stage_idx else "#D9D6CF")};">{stage}</div>'
             for i, stage in enumerate(GOV_STAGES)
         ) + '</div>', unsafe_allow_html=True)
         st.write("")
@@ -888,8 +920,8 @@ with tabs[5]:
                 if st.button(stage, key=f"gov_stage_btn_{i}", use_container_width=True):
                     st.session_state["gov_selected_stage"] = stage
         with st.expander("ℹ️ Stage guide"):
-            for _, r in df_gov_stage_info.iterrows():
-                st.markdown(f"**{int(r['StageOrder'])}. {r['StageName']}** — {r['Description']}")
+            for i, stage in enumerate(GOV_STAGES, start=1):
+                st.markdown(f"**{i}. {stage}** — {GOV_STAGE_DESCRIPTIONS[stage]}")
     with g2:
         st.markdown("#### Overall Planning Progress")
         st.markdown(
@@ -935,7 +967,7 @@ with tabs[5]:
                 if selected_idx > stage_idx:
                     st.caption(f"{domain} hasn't reached this stage yet.")
                 else:
-                    render_gov_stage_detail(domain, selected_stage)
+                    render_gov_stage_detail(domain, selected_stage, selected_week)
 
 # ----------------------------------------------------------------------------
 # PAGE: EXECUTIVE DASHBOARD
@@ -944,7 +976,7 @@ with tabs[6]:
     prow = df_portfolio[df_portfolio["Name"] == "Executive Dashboard"].iloc[0]
     st.caption(f"Type {prow['Type']} · Recurring monthly delivery to Management")
 
-    status_map = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["Done"]))
+    status_map = dict(zip(df_exec_cycle["Milestone"], df_exec_cycle["Done"]))
     data_updated_done = status_map.get("Data Updated", "N") == "Y"
     sustentacion_done = status_map.get("Monthly Review", "N") == "Y"
     fap_done = status_map.get("FAP Presentation", "N") == "Y"
@@ -952,19 +984,19 @@ with tabs[6]:
     c1, c2, c3 = st.columns(3)
     with c1:
         kpi_card("Data Updated", "Yes" if data_updated_done else "Pending",
-                  accent=STATUS_COLORS["On Track"] if data_updated_done else STATUS_COLORS["Pending"])
+                  accent=SCHEDULE_STATUS_COLORS["No Deviation"] if data_updated_done else SCHEDULE_STATUS_COLORS["Not Started"])
     with c2:
         kpi_card("Monthly Review", "Completed" if sustentacion_done else "Pending",
-                  accent=STATUS_COLORS["On Track"] if sustentacion_done else STATUS_COLORS["Pending"])
+                  accent=SCHEDULE_STATUS_COLORS["No Deviation"] if sustentacion_done else SCHEDULE_STATUS_COLORS["Not Started"])
     with c3:
         kpi_card("FAP Presentation", "Done" if fap_done else "Pending",
-                  accent=STATUS_COLORS["On Track"] if fap_done else STATUS_COLORS["Pending"])
+                  accent=SCHEDULE_STATUS_COLORS["No Deviation"] if fap_done else SCHEDULE_STATUS_COLORS["Not Started"])
 
     left, right = st.columns([0.62, 0.38])
     with left:
         st.markdown("#### Monthly Cycle Checklist")
-        actual_map = dict(zip(df_exec_cycle_status["Milestone"], df_exec_cycle_status["ActualDayOffset"]))
-        for _, r in df_exec_cycle_config.iterrows():
+        actual_map = dict(zip(df_exec_cycle["Milestone"], df_exec_cycle["ActualDayOffset"]))
+        for _, r in df_exec_cycle.iterrows():
             ms = r["Milestone"]
             done = status_map.get(ms, "N") == "Y"
             actual_day = actual_map.get(ms)
