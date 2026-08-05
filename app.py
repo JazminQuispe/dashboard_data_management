@@ -574,7 +574,7 @@ def render_gov_stage_detail(domain, stage, upto_week):
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Ownership Definition":
-        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Owner", "Steward"]].dropna(subset=["Owner"])
+        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset","Domain", "Owner", "Steward"]].dropna(subset=["Owner"])
         st.markdown("**Ownership Matrix**")
         if df.empty:
             st.caption("No ownership defined yet for this domain.")
@@ -582,7 +582,7 @@ def render_gov_stage_detail(domain, stage, upto_week):
             st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Data Quality Rules":
-        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "QualityRule", "Threshold"]].dropna(subset=["QualityRule"])
+        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Rule", "Dimension", "Threshold"]].dropna(subset=["Rule"])
         st.markdown("**Quality Rules**")
         if df.empty:
             st.caption("No quality rules defined yet for this domain.")
