@@ -156,6 +156,16 @@ st.markdown(
             background-color: {C_GREY_BG}; border: 1px solid {C_GREY_BORDER};
             border-radius: 10px; padding: 14px; height: 100%;
         }}
+
+        .kpi-status-grid {{
+            display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 20px;
+        }}
+        .kpi-status-tile {{
+            border: 1px solid; border-radius: 8px; padding: 12px 10px; text-align: center;
+            min-height: 62px; display: flex; flex-direction: column; justify-content: center; gap: 4px;
+        }}
+        .kpi-status-name {{ font-size: 11.5px; font-weight: 700; line-height: 1.25; }}
+        .kpi-status-label {{ font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.9; }}
         div.st-key-logo_box img {{ max-width: 400px !important; width: 100% !important; }}
         [data-testid="stMetricValue"] {{ color: {C_BLACK}; }}
         div.block-container {{ padding-top: 1.4rem; }}
@@ -187,14 +197,6 @@ st.markdown(
             border-radius: 8px !important; box-shadow: 0 1px 3px rgba(44,15,0,0.06);
         }}
 
-        /* Chevron / arrow roadmap for Data Governance */
-        .chevron-wrap {{ display: flex; width: 100%; }}
-        .chevron-step {{
-            flex: 1; position: relative; color: white; font-weight: 700; font-size: 12px;
-            text-align: center; padding: 16px 14px; margin-left: -16px;
-            clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%, 12% 50%);
-        }}
-        .chevron-step:first-child {{ margin-left: 0; clip-path: polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%); }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -226,6 +228,7 @@ df_gov_domains_w = sheets["Governance_Domains"]
 df_gov_datasets = sheets["Governance_Datasets"]
 df_exec_cycle = sheets["Executive_Cycle_Current"].sort_values("Order")
 df_exec_cycle_history = sheets["Executive_Cycle_History"]
+df_exec_kpi_status = sheets["Executive_KPI_Status"].sort_values("Order")
 
 # Governance_StageInfo was merged into the Instructions sheet as plain text
 # (it never changed week to week), so the 5 stages live here now.
@@ -269,6 +272,11 @@ def get_row(module, item, week):
         return _weekly_idx.loc[(module, item, week)]
     except KeyError:
         return None
+
+
+def _safe_num(x):
+    """Coerce a possibly-NaN/blank cell to 0 so sums stay int()-able."""
+    return x if pd.notna(x) else 0
 
 
 def get_series(module, item, upto_week):
@@ -560,17 +568,26 @@ def render_gov_stage_detail(domain, stage, upto_week):
     if stage == "Inventory & Prioritization":
         df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Criticality", "Use"]]
         st.markdown("**Critical Datasets Inventory**")
-        st.caption("No datasets cataloged yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
+        if df.empty:
+            st.caption("No datasets cataloged yet for this domain.")
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Ownership Definition":
         df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Owner", "Steward"]].dropna(subset=["Owner"])
         st.markdown("**Ownership Matrix**")
-        st.caption("No ownership defined yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
+        if df.empty:
+            st.caption("No ownership defined yet for this domain.")
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Data Quality Rules":
         df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "QualityRule", "Threshold"]].dropna(subset=["QualityRule"])
         st.markdown("**Quality Rules**")
-        st.caption("No quality rules defined yet for this domain.") if df.empty else st.dataframe(df, use_container_width=True, hide_index=True)
+        if df.empty:
+            st.caption("No quality rules defined yet for this domain.")
+        else:
+            st.dataframe(df, use_container_width=True, hide_index=True)
 
     elif stage == "Pipeline & Dashboard Implementation":
         row = get_gov_row(domain, upto_week)
@@ -736,8 +753,8 @@ with tabs[1]:
     overall = get_module_avg_at("Cheves", selected_week, "Progress%")
     planned_avg = get_module_avg_at("Cheves", selected_week, "Planned%")
     deviation = planned_avg - overall
-    open_tasks = sum(get_row("Cheves", it, selected_week)["OpenTickets"] if get_row("Cheves", it, selected_week) is not None else 0 for it in CHEVES_ITEMS)
-    closed_week = sum(get_row("Cheves", it, selected_week)["ClosedThisWeek"] if get_row("Cheves", it, selected_week) is not None else 0 for it in CHEVES_ITEMS)
+    open_tasks = sum(_safe_num(get_row("Cheves", it, selected_week)["OpenTickets"]) if get_row("Cheves", it, selected_week) is not None else 0 for it in CHEVES_ITEMS)
+    closed_week = sum(_safe_num(get_row("Cheves", it, selected_week)["ClosedThisWeek"]) if get_row("Cheves", it, selected_week) is not None else 0 for it in CHEVES_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -815,7 +832,7 @@ with tabs[3]:
     overall = get_module_avg_at("AIAgents", selected_week, "Progress%")
     deployment_vals = df_phases[(df_phases["Module"] == "AIAgents") & (df_phases["PhaseName"] == "Deployment") & (df_phases["Week"] == selected_week)]
     in_prod = int((deployment_vals["Progress%"].fillna(0) >= 60).sum())
-    closed_week = sum((get_row("AIAgents", it, selected_week)["ClosedThisWeek"] if get_row("AIAgents", it, selected_week) is not None else 0) for it in AI_ITEMS)
+    closed_week = sum((_safe_num(get_row("AIAgents", it, selected_week)["ClosedThisWeek"]) if get_row("AIAgents", it, selected_week) is not None else 0) for it in AI_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -857,7 +874,7 @@ with tabs[4]:
     overall = get_module_avg_at("SOKnowledge", selected_week, "Progress%")
     deployment_vals = df_phases[(df_phases["Module"] == "SOKnowledge") & (df_phases["PhaseName"] == "Deployment") & (df_phases["Week"] == selected_week)]
     in_prod = int((deployment_vals["Progress%"].fillna(0) >= 60).sum())
-    closed_week = sum((get_row("SOKnowledge", it, selected_week)["ClosedThisWeek"] if get_row("SOKnowledge", it, selected_week) is not None else 0) for it in SO_ITEMS)
+    closed_week = sum((_safe_num(get_row("SOKnowledge", it, selected_week)["ClosedThisWeek"]) if get_row("SOKnowledge", it, selected_week) is not None else 0) for it in SO_ITEMS)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -909,16 +926,54 @@ with tabs[5]:
     g1, g2 = st.columns([0.72, 0.28])
     with g1:
         st.markdown("#### MVP Maturity Roadmap")
-        st.markdown('<div class="chevron-wrap">' + "".join(
-            f'<div class="chevron-step" style="background-color:{SCHEDULE_STATUS_COLORS["No Deviation"] if i < avg_stage_idx else (C_OCEAN_BLUE if i == avg_stage_idx else "#D9D6CF")};">{stage}</div>'
-            for i, stage in enumerate(GOV_STAGES)
-        ) + '</div>', unsafe_allow_html=True)
-        st.write("")
-        stage_cols = st.columns(len(GOV_STAGES))
-        for i, (col, stage) in enumerate(zip(stage_cols, GOV_STAGES)):
-            with col:
-                if st.button(stage, key=f"gov_stage_btn_{i}", use_container_width=True):
-                    st.session_state["gov_selected_stage"] = stage
+
+        selected_stage_now = st.session_state["gov_selected_stage"]
+
+        chevron_css = ['<style>']
+        chevron_css.append(_clean_html("""
+            div.st-key-chevron_row div[data-testid="stHorizontalBlock"] { gap: 0 !important; }
+            div.st-key-chevron_row div[data-testid="stColumn"] { padding: 0 !important; }
+            div.st-key-chevron_row div[data-testid="stColumn"] div[data-testid="stButton"] { width: 100%; }
+        """))
+        for i, stage in enumerate(GOV_STAGES):
+            is_selected = stage == selected_stage_now
+            bg_color = C_OCEAN_BLUE if is_selected else "#D9D6CF"
+            text_color = "#FFFFFF" if is_selected else C_BLACK
+            clip = ("polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%)" if i == 0
+                    else "polygon(0% 0%, 88% 0%, 100% 50%, 88% 100%, 0% 100%, 12% 50%)")
+            chevron_css.append(_clean_html(f"""
+                div.st-key-chevron_row div.st-key-gov_stage_btn_{i} button {{
+                    background-color: {bg_color} !important;
+                    border: none !important;
+                    border-radius: 0 !important;
+                    padding: 16px 16px !important;
+                    margin-left: {"-18px" if i > 0 else "0"} !important;
+                    clip-path: {clip};
+                    box-shadow: none !important;
+                    min-height: 58px !important;
+                    width: 100% !important;
+                    white-space: normal !important;
+                    transition: background-color 0.15s ease, filter 0.15s ease;
+                }}
+                div.st-key-chevron_row div.st-key-gov_stage_btn_{i} button:hover {{ filter: brightness(1.08); }}
+                div.st-key-chevron_row div.st-key-gov_stage_btn_{i} button p {{
+                    color: {text_color} !important;
+                    font-weight: 800 !important;
+                    font-size: 12px !important;
+                    line-height: 1.25 !important;
+                }}
+            """))
+        chevron_css.append('</style>')
+        st.markdown("".join(chevron_css), unsafe_allow_html=True)
+
+        with st.container(key="chevron_row"):
+            chevron_cols = st.columns(len(GOV_STAGES))
+            for i, (col, stage) in enumerate(zip(chevron_cols, GOV_STAGES)):
+                with col:
+                    if st.button(stage, key=f"gov_stage_btn_{i}", use_container_width=True):
+                        st.session_state["gov_selected_stage"] = stage
+                        st.rerun()
+
         with st.expander("ℹ️ Stage guide"):
             for i, stage in enumerate(GOV_STAGES, start=1):
                 st.markdown(f"**{i}. {stage}** — {GOV_STAGE_DESCRIPTIONS[stage]}")
@@ -991,6 +1046,28 @@ with tabs[6]:
     with c3:
         kpi_card("FAP Presentation", "Done" if fap_done else "Pending",
                   accent=SCHEDULE_STATUS_COLORS["No Deviation"] if fap_done else SCHEDULE_STATUS_COLORS["Not Started"])
+
+    st.markdown("#### KPI Data Status — Current Month")
+    KPI_STATUS_STYLES = {
+        "not_updated": {"bg": C_GREY_BG, "border": C_GREY_BORDER, "text": C_TEXT_MUTED, "label": "Not updated"},
+        "updated": {"bg": "#F5C344", "border": "#D9A82E", "text": C_BLACK, "label": "Updated · pending validation"},
+        "validated": {"bg": SCHEDULE_STATUS_COLORS["No Deviation"], "border": SCHEDULE_STATUS_COLORS["No Deviation"],
+                      "text": "#FFFFFF", "label": "Updated & validated"},
+    }
+    kpi_tiles = ['<div class="kpi-status-grid">']
+    for _, r in df_exec_kpi_status.iterrows():
+        updated = r["Updated"] == "Y"
+        validated = r["Validated"] == "Y"
+        state = "validated" if (updated and validated) else ("updated" if updated else "not_updated")
+        style = KPI_STATUS_STYLES[state]
+        kpi_tiles.append(_clean_html(f"""
+            <div class="kpi-status-tile" style="background-color:{style['bg']}; border-color:{style['border']};">
+                <div class="kpi-status-name" style="color:{style['text']};">{r['KPI']}</div>
+                <div class="kpi-status-label" style="color:{style['text']};">{style['label']}</div>
+            </div>
+        """))
+    kpi_tiles.append("</div>")
+    st.markdown("".join(kpi_tiles), unsafe_allow_html=True)
 
     left, right = st.columns([0.62, 0.38])
     with left:
