@@ -566,7 +566,7 @@ def render_gov_stage_detail(domain, stage, upto_week):
     # weekly Governance_Domains sheet (read via get_gov_row, same as the rest
     # of this tab, so it respects the selected week).
     if stage == "Inventory & Prioritization":
-        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset", "Criticality", "Use"]]
+        df = df_gov_datasets[df_gov_datasets["Domain"] == domain][["Dataset","Source", "Criticality", "Usage","Update Frequency","Origin & Transformations","Known Quality Status","Known Warnings"]]
         st.markdown("**Critical Datasets Inventory**")
         if df.empty:
             st.caption("No datasets cataloged yet for this domain.")
